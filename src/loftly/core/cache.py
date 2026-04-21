@@ -72,7 +72,7 @@ class RedisCache:
     def __init__(self, url: str) -> None:
         # Lazy import: `redis` is not a hard dependency Phase 1.
         try:
-            import redis.asyncio as redis_async  # type: ignore[import-not-found]
+            import redis.asyncio as redis_async
         except ImportError as exc:  # pragma: no cover — requires redis optional
             raise RuntimeError(
                 "REDIS_URL is set but the `redis` package is not installed. "
