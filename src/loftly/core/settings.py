@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     # --- Redis / rate-limit backing store ---
     redis_url: str | None = Field(default=None)
 
+    # --- LLM provider switch ---
+    # `deterministic`  — rule-based ranker (no network). Default.
+    # `anthropic`      — Claude Sonnet/Haiku (stub today; wired Week 7).
+    loftly_llm_provider: Literal["deterministic", "anthropic"] = Field(
+        default="deterministic",
+        description="Which LLMProvider implementation the app should use.",
+    )
+
     # --- AI providers (optional in dev) ---
     anthropic_api_key: str | None = Field(default=None)
     typhoon_api_key: str | None = Field(default=None)
