@@ -25,6 +25,7 @@ from loftly.api.routes import (
     account,
     admin,
     admin_flags,
+    admin_ingestion,
     admin_metrics,
     affiliate,
     articles,
@@ -188,6 +189,7 @@ def create_app() -> FastAPI:
     app.include_router(affiliate.router)
     app.include_router(admin.router)
     app.include_router(admin_flags.router)
+    app.include_router(admin_ingestion.router)
     app.include_router(admin_metrics.router)
     app.include_router(internal.router)
     app.include_router(waitlist.router)
