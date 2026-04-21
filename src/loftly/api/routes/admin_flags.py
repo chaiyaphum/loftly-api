@@ -59,6 +59,26 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "expected_variants": ["control", "variant_benefit_led", "variant_urgency"],
         "expected_rollout_pct": 100,
     },
+    {
+        "key": "post_v1_selector_chat",
+        "description": (
+            "POST_V1 §1 selector results chat panel + backend endpoint. "
+            "Owner: founder. Default OFF."
+        ),
+        "type": "boolean",
+        "expected_variants": None,
+        "expected_rollout_pct": 0,
+    },
+    {
+        "key": "post_v1_returning_landing",
+        "description": (
+            "POST_V1 §3 returning-user personalized landing (client-hydrated). "
+            "Owner: founder. Default OFF."
+        ),
+        "type": "boolean",
+        "expected_variants": None,
+        "expected_rollout_pct": 0,
+    },
 ]
 
 
