@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     # --- Email ---
     resend_api_key: str | None = Field(default=None)
     resend_from_address: str = Field(default="Loftly <noreply@loftly.co.th>")
+    #: Inbox for operator-addressed notifications (weekly content-stale digest,
+    #: future ops pings). Distinct from `resend_from_address` which is the
+    #: outbound FROM for user-facing mail.
+    founder_notify_email: str = Field(default="founder@loftly.co.th")
 
     # --- OAuth providers (optional; stub mode when unset) ---
     loftly_oauth_google_client_id: str | None = Field(default=None)

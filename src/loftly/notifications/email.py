@@ -89,4 +89,51 @@ async def send_magic_link(email: str, magic_url: str, locale: str = "th") -> Non
     )
 
 
-__all__ = ["send_magic_link"]
+async def send_email(
+    *,
+    to: str,
+    subject: str,
+    text: str,
+) -> str | None:
+    """Generic plain-text transactional send.
+
+    Used by operator-facing notifications (e.g. weekly content-stale digest)
+    where we don't want the magic-link template. Returns the Resend message id
+    when a send happened, or `None` in stub mode (no RESEND_API_KEY) so callers
+    can branch on "did a real email leave?".
+
+    Stubbing mirrors `send_magic_link`: when the API key is unset we structlog
+    the event and return `None`. This keeps dev + CI working without a real
+    Resend account.
+    """
+    settings = get_settings()
+
+    if not settings.resend_api_key:
+        log.info(
+            "transactional_email_stub",
+            to=to,
+            subject=subject,
+        )
+        return None
+
+    import resend
+
+    resend.api_key = settings.resend_api_key
+    payload: Any = {
+        "from": settings.resend_from_address,
+        "to": [to],
+        "subject": subject,
+        "text": text,
+    }
+    result = resend.Emails.send(payload)
+    message_id = result.get("id") if isinstance(result, dict) else None
+    log.info(
+        "transactional_email_sent",
+        to=to,
+        subject=subject,
+        resend_id=message_id,
+    )
+    return message_id if isinstance(message_id, str) else None
+
+
+__all__ = ["send_email", "send_magic_link"]
