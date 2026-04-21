@@ -13,20 +13,27 @@ are **merged** on PATCH — patching `earn_rate_local.dining` must not wipe
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 import unicodedata
 import uuid
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
+from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from loftly.api.auth import get_current_admin_id
 from loftly.api.errors import LoftlyError
+from loftly.api.jwt_util import decode_access_token
+from loftly.core.settings import Settings, get_settings
 from loftly.db.audit import log_action
 from loftly.db.engine import get_session
 from loftly.db.models.article import Article
@@ -1247,6 +1254,349 @@ async def affiliate_stats(
     }
 
 
-@router.get("/affiliate/export.csv", summary="CSV dump of last 30d clicks + conversions")
-async def affiliate_export(_admin_id: uuid.UUID = Depends(get_current_admin_id)) -> None:
-    raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, detail="not implemented")
+# ---------------------------------------------------------------------------
+# Affiliate CSV export — W17 per mvp/DEV_PLAN.md.
+#
+# A dedicated auth path that accepts EITHER `Authorization: Bearer …` OR a
+# `?token=…` query param, because a plain `<a download>` link cannot set a
+# custom header. The fallback is JWT-signed so it still enforces admin role.
+# ---------------------------------------------------------------------------
+
+
+async def _admin_id_from_token_or_header(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> uuid.UUID:
+    """Resolve admin UUID from Authorization header OR ?token= query param."""
+    _ = request
+    raw: str | None = None
+    if authorization and authorization.lower().startswith("bearer "):
+        raw = authorization.split(" ", 1)[1].strip()
+    elif token:
+        raw = token.strip()
+    if not raw:
+        raise LoftlyError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="unauthorized",
+            message_en="Missing bearer token.",
+            message_th="ไม่พบโทเคนยืนยันตัวตน",
+        )
+    try:
+        claims = decode_access_token(raw, settings=settings)
+    except JWTError as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="unauthorized",
+            message_en="Invalid or expired token.",
+            message_th="โทเคนหมดอายุหรือไม่ถูกต้อง",
+        ) from exc
+    if claims.get("role") != "admin":
+        raise LoftlyError(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="forbidden",
+            message_en="Admin role required.",
+            message_th="ต้องเป็นผู้ดูแลระบบเท่านั้น",
+        )
+    sub = claims.get("sub")
+    if not sub:
+        raise LoftlyError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="unauthorized",
+            message_en="Token missing `sub` claim.",
+            message_th="โทเคนไม่มีข้อมูลผู้ใช้",
+        )
+    try:
+        return uuid.UUID(str(sub))
+    except ValueError as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="unauthorized",
+            message_en="Token `sub` is not a UUID.",
+            message_th="รหัสผู้ใช้ในโทเคนไม่ถูกต้อง",
+        ) from exc
+
+
+# CSV columns — matches the contract in mvp/DEV_PLAN.md W17. Order is stable
+# because downstream (finance / partner reconciliation sheets) pins on it.
+_AFFILIATE_CSV_COLUMNS = (
+    "date",
+    "partner_id",
+    "card_id",
+    "card_name",
+    "clicks",
+    "unique_visitors",
+    "conversions",
+    "conversion_rate_pct",
+    "commission_thb",
+    "avg_time_to_convert_hours",
+)
+
+_CSV_CHUNK_ROWS = 5000
+
+
+def _parse_iso_date(raw: str | None, *, field: str) -> date | None:
+    if raw in (None, ""):
+        return None
+    assert raw is not None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="invalid_date",
+            message_en=f"`{field}` must be ISO date YYYY-MM-DD.",
+            message_th=f"`{field}` ต้องอยู่ในรูปแบบ YYYY-MM-DD",
+        ) from exc
+
+
+async def _stream_affiliate_csv(
+    session: AsyncSession,
+    *,
+    from_dt: datetime,
+    to_dt: datetime,
+    partner_id: str | None,
+) -> AsyncIterator[bytes]:
+    """Aggregate clicks + conversions into per-(date, partner_id, card_id) rows.
+
+    Aggregation is done in Python because (a) SQLite vs. Postgres date-bucketing
+    differs and (b) 30d of clicks easily fits in memory at Phase 1 traffic. The
+    chunking (`_CSV_CHUNK_ROWS`) controls how many CSV rows we serialise per
+    yielded network chunk — it caps the peak `StringIO` footprint, not the SQL
+    result-set size.
+    """
+    from loftly.db.models.affiliate import AffiliateClick, AffiliateConversion
+
+    clicks_stmt = (
+        select(
+            AffiliateClick.click_id,
+            AffiliateClick.card_id,
+            AffiliateClick.partner_id,
+            AffiliateClick.ip_hash,
+            AffiliateClick.created_at,
+            CardModel.display_name,
+        )
+        .join(CardModel, AffiliateClick.card_id == CardModel.id)
+        .where(
+            AffiliateClick.created_at >= from_dt,
+            AffiliateClick.created_at < to_dt,
+        )
+    )
+    if partner_id:
+        clicks_stmt = clicks_stmt.where(AffiliateClick.partner_id == partner_id)
+
+    click_rows = (await session.execute(clicks_stmt)).all()
+
+    # Bucket key: (date_iso, partner_id, card_id_str) -> aggregate state.
+    buckets: dict[tuple[str, str, str], dict[str, Any]] = {}
+    # click_id -> (bucket key, click time) so conversions target the right
+    # bucket and we can compute time-to-convert.
+    click_index: dict[uuid.UUID, tuple[tuple[str, str, str], datetime]] = {}
+
+    for click_id, card_id, p_id, ip_hash, created_at, card_name in click_rows:
+        click_date = created_at.date() if isinstance(created_at, datetime) else created_at
+        key = (click_date.isoformat(), str(p_id), str(card_id))
+        bucket = buckets.setdefault(
+            key,
+            {
+                "card_name": card_name,
+                "clicks": 0,
+                "unique_visitors": set(),
+                "conversions": 0,
+                "commission_thb": 0.0,
+                "convert_hours_sum": 0.0,
+                "convert_hours_count": 0,
+            },
+        )
+        bucket["clicks"] += 1
+        if ip_hash is not None:
+            bucket["unique_visitors"].add(bytes(ip_hash))
+        if isinstance(created_at, datetime):
+            click_time = created_at
+        else:
+            click_time = datetime.combine(created_at, datetime.min.time(), tzinfo=UTC)
+        click_index[click_id] = (key, click_time)
+
+    conv_stmt = select(
+        AffiliateConversion.click_id,
+        AffiliateConversion.commission_thb,
+        AffiliateConversion.received_at,
+    ).where(
+        AffiliateConversion.received_at >= from_dt,
+        AffiliateConversion.received_at < to_dt,
+    )
+    if partner_id:
+        conv_stmt = conv_stmt.where(AffiliateConversion.partner_id == partner_id)
+    conv_rows = (await session.execute(conv_stmt)).all()
+
+    for click_id, commission, received_at in conv_rows:
+        entry = click_index.get(click_id)
+        if entry is None:
+            # Out-of-range click (older than from_dt) or partner mismatch; skip.
+            continue
+        key, click_time = entry
+        bucket = buckets[key]
+        bucket["conversions"] += 1
+        bucket["commission_thb"] += float(commission or 0)
+        if isinstance(received_at, datetime) and isinstance(click_time, datetime):
+            delta = (received_at - click_time).total_seconds() / 3600.0
+            if delta >= 0:
+                bucket["convert_hours_sum"] += delta
+                bucket["convert_hours_count"] += 1
+
+    # Stable, predictable ordering for reconciliation tooling.
+    ordered_keys = sorted(buckets.keys())
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(_AFFILIATE_CSV_COLUMNS)
+    yield buffer.getvalue().encode("utf-8")
+    buffer.seek(0)
+    buffer.truncate(0)
+
+    rows_in_chunk = 0
+    for key in ordered_keys:
+        bkt = buckets[key]
+        date_iso, p_id, card_id_str = key
+        clicks_n = int(bkt["clicks"])
+        conv_n = int(bkt["conversions"])
+        conv_rate_pct = (100.0 * conv_n / clicks_n) if clicks_n else 0.0
+        avg_hours: float | str = (
+            round(bkt["convert_hours_sum"] / bkt["convert_hours_count"], 2)
+            if bkt["convert_hours_count"]
+            else ""
+        )
+        writer.writerow(
+            [
+                date_iso,
+                p_id,
+                card_id_str,
+                bkt["card_name"],
+                clicks_n,
+                len(bkt["unique_visitors"]),
+                conv_n,
+                f"{conv_rate_pct:.2f}",
+                f"{bkt['commission_thb']:.2f}",
+                avg_hours,
+            ]
+        )
+        rows_in_chunk += 1
+        if rows_in_chunk >= _CSV_CHUNK_ROWS:
+            yield buffer.getvalue().encode("utf-8")
+            buffer.seek(0)
+            buffer.truncate(0)
+            rows_in_chunk = 0
+
+    remaining = buffer.getvalue()
+    if remaining:
+        yield remaining.encode("utf-8")
+
+
+async def _affiliate_csv_response(
+    session: AsyncSession,
+    *,
+    from_param: str | None,
+    to_param: str | None,
+    partner_id: str | None,
+) -> StreamingResponse:
+    today_utc = datetime.now(UTC).date()
+    parsed_from = _parse_iso_date(from_param, field="from")
+    parsed_to = _parse_iso_date(to_param, field="to")
+    if parsed_from is None:
+        parsed_from = today_utc - timedelta(days=30)
+    if parsed_to is None:
+        parsed_to = today_utc
+    if parsed_to < parsed_from:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="invalid_range",
+            message_en="`to` must be on or after `from`.",
+            message_th="ช่วงวันที่ไม่ถูกต้อง",
+        )
+
+    # Inclusive end date — query is half-open [from 00:00 UTC, to+1 00:00 UTC).
+    from_dt = datetime.combine(parsed_from, datetime.min.time(), tzinfo=UTC)
+    to_dt = datetime.combine(parsed_to + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
+
+    filename = f"affiliate-stats-{parsed_from.isoformat()}-{parsed_to.isoformat()}.csv"
+    generator = _stream_affiliate_csv(
+        session,
+        from_dt=from_dt,
+        to_dt=to_dt,
+        partner_id=partner_id,
+    )
+    return StreamingResponse(
+        generator,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get(
+    "/affiliate/stats.csv",
+    summary="CSV export of per-day affiliate stats in [from, to]",
+)
+async def affiliate_stats_csv(
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+    partner_id: str | None = Query(default=None),
+    _admin_id: uuid.UUID = Depends(_admin_id_from_token_or_header),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """Stream a UTF-8 CSV of daily (partner, card) aggregates.
+
+    See `_AFFILIATE_CSV_COLUMNS` for column contract. Defaults to the last 30
+    days if `from`/`to` are omitted. Filter by `partner_id` when reconciling
+    against a single affiliate network.
+    """
+    return await _affiliate_csv_response(
+        session, from_param=from_, to_param=to, partner_id=partner_id
+    )
+
+
+@router.get(
+    "/affiliate/export.csv",
+    summary="Alias of /affiliate/stats.csv kept for the admin dashboard link",
+)
+async def affiliate_export(
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+    partner_id: str | None = Query(default=None),
+    _admin_id: uuid.UUID = Depends(_admin_id_from_token_or_header),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """Kept so the existing admin dashboard (`/admin/affiliate`) keeps working
+    without a lockstep frontend deploy. New callers should use `stats.csv`.
+    """
+    return await _affiliate_csv_response(
+        session, from_param=from_, to_param=to, partner_id=partner_id
+    )
+
+
+# ---------------------------------------------------------------------------
+# audit_log retention — preview (dry-run counts). Mutating run lives on the
+# `/v1/internal/audit-retention/run` endpoint, protected by X-API-Key so the
+# Cloudflare cron can call it without holding an admin JWT.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/jobs/audit-retention/preview",
+    summary="Dry-run counts of audit_log rows due for PDPA retention deletion",
+)
+async def audit_retention_preview(
+    _admin_id: uuid.UUID = Depends(get_current_admin_id),
+) -> dict[str, Any]:
+    """Return per-bucket counts without deleting anything.
+
+    Admin-only. Run this before any `--execute` against staging/prod so the
+    founder has a sanity-check on the blast radius.
+    """
+    from loftly.jobs.audit_log_retention import run_retention
+
+    result = await run_retention(dry_run=True)
+    return result.to_log_dict()
