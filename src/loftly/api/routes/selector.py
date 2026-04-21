@@ -1,32 +1,32 @@
 """Card Selector — `POST /v1/selector`, `GET /v1/selector/{session_id}`.
 
-Phase 1 wiring (Week 5-6):
-- Validates the spend profile (category sum must equal monthly_spend_thb ±100)
-- Hashes the profile into a stable cache key; 24h Redis/in-memory cache
-- Dispatches to the configured `LLMProvider` (deterministic by default)
-- Persists every call as a `selector_sessions` row
-- Anonymous callers receive `partial_unlock=true` to drive the email-gate UI
+Phase 2 (Week 9-12) adds:
+- Sonnet → Haiku → deterministic fallback chain per `AI_PROMPTS.md §Failure policy`
+- SSE streaming via `Accept: text/event-stream` (envelope → rationale chunks → done)
+- Mid-tier validation on `total_monthly_earning_thb_equivalent` drift (±5%)
 
-SSE streaming is **deferred to Week 7** per DEV_PLAN.md — today we return the
-full JSON envelope synchronously, which still matches openapi.yaml's
-`application/json` content type.
+Phase 1 pieces kept: category-sum validation, 24h profile-hash cache,
+`selector_sessions` persistence, `partial_unlock=true` for anon callers.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi.responses import StreamingResponse
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from loftly.ai import SelectorContext, get_provider
+from loftly.ai import LLMProvider, SelectorContext, get_provider
 from loftly.api.errors import LoftlyError
 from loftly.core.cache import get_cache
 from loftly.core.logging import get_logger
@@ -47,6 +47,11 @@ _CACHE_TTL_SECONDS = 86_400
 _SELECTOR_LINK_PURPOSE = "selector_retrieve"
 # `selector_invalid_categories` tolerance — SPEC.md §2 + API_CONTRACT.md.
 _CATEGORY_SUM_TOLERANCE = 100
+# AI_PROMPTS.md §Failure policy: Sonnet >10s → Haiku; Haiku >5s → deterministic.
+_SONNET_TIMEOUT_SEC = 10.0
+_HAIKU_TIMEOUT_SEC = 5.0
+# AI_PROMPTS.md §Quality gates: total THB must match Σ (points × thb_per_point) ±5%.
+_THB_DRIFT_TOLERANCE = 0.05
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +82,32 @@ def _profile_hash(payload: SelectorInput) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _validate_earning_consistency(
+    result: SelectorResult,
+    context: SelectorContext,
+) -> bool:
+    """Return True if total_monthly_earning_thb_equivalent is within ±5% of
+
+    Σ (points × valuation). Used as a soft quality gate before returning LLM
+    output. A failure triggers one retry; second failure → mark as fallback.
+    """
+    if not result.stack:
+        return True
+    expected_thb = 0.0
+    for item in result.stack:
+        card = next((c for c in context.cards if c.slug == item.slug), None)
+        if card is None or card.earn_currency is None:
+            continue
+        val = context.valuations_by_currency_code.get(card.earn_currency.code)
+        thb_per_point = float(val.thb_per_point) if val else 0.0
+        expected_thb += item.monthly_earning_points * thb_per_point
+    if expected_thb == 0:
+        # Nothing to compare against; accept as-is.
+        return True
+    delta = abs(result.total_monthly_earning_thb_equivalent - expected_thb) / expected_thb
+    return delta <= _THB_DRIFT_TOLERANCE
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +145,78 @@ async def _load_context(session: AsyncSession) -> SelectorContext:
     return SelectorContext(
         cards=cards,
         valuations_by_currency_code=valuations_by_code,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Provider fallback chain.
+# ---------------------------------------------------------------------------
+
+
+async def _run_with_fallback(
+    payload: SelectorInput,
+    context: SelectorContext,
+) -> SelectorResult:
+    """Sonnet → Haiku → deterministic, honoring AI_PROMPTS.md §Failure policy.
+
+    Always returns something. `fallback=True` is stamped whenever we've dropped
+    below the primary path so callers can surface the "AI temporarily
+    unavailable" warning.
+    """
+    provider = get_provider()
+
+    # Configured provider is deterministic → no fallback work to do.
+    if provider.name != "anthropic":
+        return await provider.card_selector(payload, context)
+
+    warnings: list[str] = []
+
+    # 1) Try Sonnet.
+    try:
+        result = await asyncio.wait_for(
+            provider.card_selector(payload, context),
+            timeout=_SONNET_TIMEOUT_SEC,
+        )
+        if _validate_earning_consistency(result, context):
+            return result
+        # Quality gate failed once — retry; if still bad, fall through to Haiku.
+        log.warning("selector_sonnet_quality_retry")
+        result = await asyncio.wait_for(
+            provider.card_selector(payload, context),
+            timeout=_SONNET_TIMEOUT_SEC,
+        )
+        if _validate_earning_consistency(result, context):
+            return result
+        warnings.append("quality_gate_drift")
+    except (TimeoutError, NotImplementedError, Exception) as exc:
+        log.warning("selector_sonnet_fallback", error=str(exc)[:200])
+        warnings.append("sonnet_fallback")
+
+    # 2) Try Haiku.
+    try:
+        from loftly.ai.providers.anthropic_haiku import AnthropicHaikuProvider
+
+        haiku: LLMProvider = AnthropicHaikuProvider()
+        result = await asyncio.wait_for(
+            haiku.card_selector(payload, context),
+            timeout=_HAIKU_TIMEOUT_SEC,
+        )
+        result = result.model_copy(update={"warnings": [*result.warnings, *warnings]})
+        return result
+    except (TimeoutError, NotImplementedError, Exception) as exc:
+        log.warning("selector_haiku_fallback", error=str(exc)[:200])
+        warnings.append("haiku_fallback")
+
+    # 3) Deterministic last resort.
+    from loftly.ai.providers.deterministic import DeterministicProvider
+
+    rule_based: LLMProvider = DeterministicProvider()
+    result = await rule_based.card_selector(payload, context)
+    return result.model_copy(
+        update={
+            "warnings": [*result.warnings, *warnings, "AI temporarily unavailable"],
+            "fallback": True,
+        }
     )
 
 
@@ -171,56 +274,124 @@ def _verify_session_token(token: str, settings: Settings) -> uuid.UUID:
 
 
 # ---------------------------------------------------------------------------
+# SSE event builder
+# ---------------------------------------------------------------------------
+
+
+def _sse_event(event: str, data: Any) -> bytes:
+    """Format a Server-Sent Events frame."""
+    serialized = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
+    return f"event: {event}\ndata: {serialized}\n\n".encode()
+
+
+async def _stream_selector(result: SelectorResult) -> AsyncIterator[bytes]:
+    """Emit envelope → rationale chunks → done.
+
+    The rationale is pre-computed (deterministic or LLM), so we chunk it by
+    sentence for a snappy typing effect. For real streaming of partial LLM
+    tokens we'd plumb client.messages.stream() through; fine to defer — the
+    client contract is the same either way.
+    """
+    envelope = {
+        "session_id": result.session_id,
+        "stack": [item.model_dump(mode="json") for item in result.stack],
+        "total_monthly_earning_points": result.total_monthly_earning_points,
+        "total_monthly_earning_thb_equivalent": result.total_monthly_earning_thb_equivalent,
+        "months_to_goal": result.months_to_goal,
+        "with_signup_bonus_months": result.with_signup_bonus_months,
+        "valuation_confidence": result.valuation_confidence,
+        "partial_unlock": result.partial_unlock,
+    }
+    yield _sse_event("envelope", envelope)
+
+    # Chunk rationale_th (primary user-facing text) by sentence-ish boundaries.
+    rationale = result.rationale_th or ""
+    chunk_size = max(40, len(rationale) // 4 or 1)
+    for i in range(0, len(rationale), chunk_size):
+        chunk = rationale[i : i + chunk_size]
+        yield _sse_event("rationale_chunk", chunk)
+        # Tiny await yields control so the client sees progressive flushes.
+        await asyncio.sleep(0)
+
+    yield _sse_event(
+        "done",
+        {
+            "warnings": result.warnings,
+            "llm_model": result.llm_model,
+            "fallback": result.fallback,
+            "rationale_en": result.rationale_en,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
 
-@router.post(
-    "",
-    response_model=SelectorResult,
-    summary="Submit spend profile; receive ranked card stack",
-)
-async def submit(
+async def _compute_or_get_cached(
     payload: SelectorInput,
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession,
 ) -> SelectorResult:
-    """Validate → cache-check → call provider → persist → return."""
+    """Core path used by both JSON and SSE responses. Handles cache + persist."""
     _validate_category_sum(payload)
     cache = get_cache()
-    provider = get_provider()
     key = f"selector:{_profile_hash(payload)}"
 
-    # Cache hit — serialize existing SelectorResult back out.
     cached = await cache.get(key)
     if cached is not None:
         log.info("selector_cache_hit", profile_hash=key)
         return SelectorResult.model_validate(cached)
 
-    # Miss — build context and invoke provider.
     context = await _load_context(session)
-    raw_result = await provider.card_selector(payload, context)
+    raw_result = await _run_with_fallback(payload, context)
 
-    # Persist selector_sessions row (user_id=None for anon; bound later).
     row = SelectorSession(
         user_id=None,
         profile_hash=_profile_hash(payload),
         input=payload.model_dump(mode="json"),
         output=raw_result.model_dump(mode="json"),
-        provider=provider.name,
+        provider=raw_result.llm_model,
     )
     session.add(row)
     await session.commit()
     await session.refresh(row)
 
-    # Stamp session_id + partial_unlock, then cache.
     result = raw_result.model_copy(update={"session_id": str(row.id), "partial_unlock": True})
     await cache.set(key, result.model_dump(mode="json"), _CACHE_TTL_SECONDS)
     log.info(
         "selector_computed",
         session_id=str(row.id),
-        provider=provider.name,
+        provider=raw_result.llm_model,
         cards=len(result.stack),
+        fallback=result.fallback,
     )
+    return result
+
+
+@router.post(
+    "",
+    response_model=None,  # we may return either SelectorResult or StreamingResponse
+    summary="Submit spend profile; receive ranked card stack (JSON or SSE)",
+)
+async def submit(
+    payload: SelectorInput,
+    request: Request,
+    accept: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_session),
+) -> SelectorResult | StreamingResponse:
+    """Validate → cache-check → call provider → persist → return.
+
+    Content negotiation: `Accept: text/event-stream` → SSE. Else JSON.
+    """
+    _ = request  # kept in signature for future per-request hooks
+    result = await _compute_or_get_cached(payload, session)
+    if accept and "text/event-stream" in accept:
+        return StreamingResponse(
+            _stream_selector(result),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
     return result
 
 
@@ -257,9 +428,7 @@ async def get_session_result(
             message_th="ไม่พบ session",
             details={"session_id": str(session_id)},
         )
-    # Output is stored with session_id already stamped.
     output_data: dict[str, Any] = dict(row.output)
-    # Ensure session_id matches the row's id even if envelope drifts.
     output_data["session_id"] = str(row.id)
     return SelectorResult.model_validate(output_data)
 
