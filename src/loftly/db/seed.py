@@ -195,6 +195,31 @@ SAMPLE_CARDS: list[dict[str, Any]] = [
         "description_th": "บัตรสะสมไมล์สำหรับนักเดินทาง — เรทต่างประเทศน่าสนใจ",
         "description_en": "Miles-focused card with strong foreign earn rate",
     },
+    # Airline-currency card so the miles-goal path has a candidate under the
+    # deterministic provider (it filters to currency_type == "airline"). Used
+    # by the golden-set eval as well as real miles queries.
+    {
+        "slug": "scb-thai-airways",
+        "bank_slug": "scb",
+        "currency_code": "ROP",
+        "display_name": "SCB Thai Airways Royal Orchid Plus",
+        "tier": "Platinum",
+        "network": "Visa",
+        "annual_fee_thb": 3000.00,
+        "annual_fee_waiver": "ฟรีปีแรก",
+        "min_income_thb": 30000.00,
+        "min_age": 20,
+        "earn_rate_local": {"travel": 1.5, "dining": 1.2, "default": 1.0},
+        "earn_rate_foreign": {"default": 1.5},
+        "benefits": {"airline_partner": "Thai Airways", "tier_qualifying": True},
+        "signup_bonus": {
+            "bonus_points": 10000,
+            "spend_required": 50000.0,
+            "timeframe_days": 90,
+        },
+        "description_th": "บัตรสะสมไมล์ ROP สายการบินไทย ตรงโปรแกรม",
+        "description_en": "Direct ROP earner for Thai Airways loyalists",
+    },
 ]
 
 

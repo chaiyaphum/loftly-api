@@ -1,0 +1,185 @@
+{
+  "_comment": "Golden-set profiles per AI_PROMPTS.md §Evaluation. 20 synthetic cases covering 3 personas x 5 spend tiers x goal variations. Expected top-3 slugs use the cards from db/seed.py. Under the deterministic provider, miles-goal keeps only airline-currency cards (scb-thai-airways in the seed), cashback keeps only bank_proprietary (kbank-wisdom, uob-prvi-miles), and benefits ranks by benefits-JSON depth.",
+  "profiles": [
+    {
+      "id": "miles-30k-thai-flyer",
+      "persona": "miles-optimizer",
+      "monthly_spend_thb": 30000,
+      "spend_categories": {"dining": 8000, "travel": 7000, "online": 6000, "grocery": 5000, "other": 4000},
+      "goal": {"type": "miles", "currency_preference": "ROP", "horizon_months": 24, "target_points": 60000},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways"]
+    },
+    {
+      "id": "miles-80k-frequent-flyer",
+      "persona": "miles-optimizer",
+      "monthly_spend_thb": 80000,
+      "spend_categories": {"dining": 20000, "travel": 25000, "online": 15000, "grocery": 10000, "other": 10000},
+      "goal": {"type": "miles", "currency_preference": "ROP", "horizon_months": 12, "target_points": 90000},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways"]
+    },
+    {
+      "id": "miles-200k-executive",
+      "persona": "miles-optimizer",
+      "monthly_spend_thb": 200000,
+      "spend_categories": {"dining": 40000, "travel": 70000, "online": 40000, "grocery": 20000, "other": 30000},
+      "goal": {"type": "miles", "currency_preference": "ROP", "horizon_months": 6, "target_points": 120000},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways"]
+    },
+    {
+      "id": "miles-500k-ultra",
+      "persona": "miles-optimizer",
+      "monthly_spend_thb": 500000,
+      "spend_categories": {"dining": 80000, "travel": 200000, "online": 100000, "grocery": 50000, "other": 70000},
+      "goal": {"type": "miles", "currency_preference": "ROP", "horizon_months": 12, "target_points": 300000},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways"]
+    },
+    {
+      "id": "miles-80k-with-existing",
+      "persona": "miles-optimizer",
+      "monthly_spend_thb": 80000,
+      "spend_categories": {"dining": 20000, "travel": 25000, "online": 15000, "grocery": 10000, "other": 10000},
+      "goal": {"type": "miles", "currency_preference": "ROP", "horizon_months": 12, "target_points": 90000},
+      "current_cards": ["kbank-wisdom"],
+      "expected_top3_card_slugs": ["scb-thai-airways"]
+    },
+    {
+      "id": "cashback-30k-student",
+      "persona": "cashback-maximizer",
+      "monthly_spend_thb": 30000,
+      "spend_categories": {"dining": 8000, "online": 10000, "grocery": 7000, "travel": 2000, "other": 3000},
+      "goal": {"type": "cashback", "currency_preference": "K_POINT", "horizon_months": 12},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "cashback-80k-family",
+      "persona": "cashback-maximizer",
+      "monthly_spend_thb": 80000,
+      "spend_categories": {"dining": 15000, "online": 20000, "grocery": 25000, "travel": 10000, "other": 10000},
+      "goal": {"type": "cashback", "currency_preference": "K_POINT", "horizon_months": 12},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "cashback-200k-professional",
+      "persona": "cashback-maximizer",
+      "monthly_spend_thb": 200000,
+      "spend_categories": {"dining": 40000, "online": 60000, "grocery": 40000, "travel": 30000, "other": 30000},
+      "goal": {"type": "cashback", "currency_preference": "UOB_REWARDS", "horizon_months": 12},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "cashback-500k-business-owner",
+      "persona": "cashback-maximizer",
+      "monthly_spend_thb": 500000,
+      "spend_categories": {"dining": 80000, "online": 150000, "grocery": 80000, "travel": 100000, "other": 90000},
+      "goal": {"type": "cashback", "currency_preference": "K_POINT", "horizon_months": 6},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "cashback-30k-with-existing",
+      "persona": "cashback-maximizer",
+      "monthly_spend_thb": 30000,
+      "spend_categories": {"dining": 8000, "online": 10000, "grocery": 7000, "travel": 2000, "other": 3000},
+      "goal": {"type": "cashback", "horizon_months": 12},
+      "current_cards": ["uob-prvi-miles"],
+      "expected_top3_card_slugs": ["kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "benefits-30k-lounge-seeker",
+      "persona": "benefit-collector",
+      "monthly_spend_thb": 30000,
+      "spend_categories": {"dining": 10000, "travel": 10000, "online": 5000, "grocery": 3000, "other": 2000},
+      "goal": {"type": "benefits", "horizon_months": 12},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways", "kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "benefits-80k-traveler",
+      "persona": "benefit-collector",
+      "monthly_spend_thb": 80000,
+      "spend_categories": {"dining": 20000, "travel": 30000, "online": 15000, "grocery": 10000, "other": 5000},
+      "goal": {"type": "benefits", "horizon_months": 12},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways", "kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "benefits-200k-premium",
+      "persona": "benefit-collector",
+      "monthly_spend_thb": 200000,
+      "spend_categories": {"dining": 50000, "travel": 60000, "online": 40000, "grocery": 30000, "other": 20000},
+      "goal": {"type": "benefits", "horizon_months": 12},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways", "kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "benefits-500k-elite",
+      "persona": "benefit-collector",
+      "monthly_spend_thb": 500000,
+      "spend_categories": {"dining": 100000, "travel": 180000, "online": 80000, "grocery": 70000, "other": 70000},
+      "goal": {"type": "benefits", "horizon_months": 6},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways", "kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "benefits-30k-with-existing",
+      "persona": "benefit-collector",
+      "monthly_spend_thb": 30000,
+      "spend_categories": {"dining": 10000, "travel": 10000, "online": 5000, "grocery": 3000, "other": 2000},
+      "goal": {"type": "benefits", "horizon_months": 24},
+      "current_cards": ["kbank-wisdom"],
+      "expected_top3_card_slugs": ["scb-thai-airways", "kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "miles-short-horizon-sprint",
+      "persona": "miles-optimizer",
+      "monthly_spend_thb": 80000,
+      "spend_categories": {"dining": 15000, "travel": 30000, "online": 20000, "grocery": 10000, "other": 5000},
+      "goal": {"type": "miles", "currency_preference": "ROP", "horizon_months": 6, "target_points": 40000},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways"]
+    },
+    {
+      "id": "cashback-long-horizon",
+      "persona": "cashback-maximizer",
+      "monthly_spend_thb": 200000,
+      "spend_categories": {"dining": 40000, "online": 60000, "grocery": 40000, "travel": 30000, "other": 30000},
+      "goal": {"type": "cashback", "currency_preference": "K_POINT", "horizon_months": 24},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "miles-dining-heavy",
+      "persona": "miles-optimizer",
+      "monthly_spend_thb": 80000,
+      "spend_categories": {"dining": 40000, "travel": 15000, "online": 10000, "grocery": 10000, "other": 5000},
+      "goal": {"type": "miles", "currency_preference": "ROP", "horizon_months": 12, "target_points": 60000},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways"]
+    },
+    {
+      "id": "cashback-online-heavy",
+      "persona": "cashback-maximizer",
+      "monthly_spend_thb": 30000,
+      "spend_categories": {"dining": 3000, "online": 20000, "grocery": 3000, "travel": 1000, "other": 3000},
+      "goal": {"type": "cashback", "currency_preference": "K_POINT", "horizon_months": 12},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "benefits-balanced-mix",
+      "persona": "benefit-collector",
+      "monthly_spend_thb": 80000,
+      "spend_categories": {"dining": 16000, "online": 16000, "grocery": 16000, "travel": 16000, "other": 16000},
+      "goal": {"type": "benefits", "horizon_months": 12},
+      "current_cards": [],
+      "expected_top3_card_slugs": ["scb-thai-airways", "kbank-wisdom", "uob-prvi-miles"]
+    }
+  ]
+}
