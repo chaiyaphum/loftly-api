@@ -45,7 +45,7 @@ from loftly.db.models.selector_session import SelectorSession
 from loftly.observability.posthog import capture as posthog_capture
 from loftly.observability.posthog import hash_distinct_id
 from loftly.prompts.typhoon_nlu_spend import prompt_slug as nlu_prompt_slug
-from loftly.schemas.selector import SelectorInput, SelectorResult
+from loftly.schemas.selector import FallbackReason, SelectorInput, SelectorResult
 from loftly.schemas.spend_nlu import SpendNLURequest, SpendNLUResponse
 
 router = APIRouter(prefix="/v1/selector", tags=["selector"])
@@ -62,6 +62,15 @@ _SONNET_TIMEOUT_SEC = 10.0
 _HAIKU_TIMEOUT_SEC = 5.0
 # AI_PROMPTS.md §Quality gates: total THB must match Σ (points × thb_per_point) ±5%.
 _THB_DRIFT_TOLERANCE = 0.05
+# 429 retry policy — one retry with fixed backoff before falling back.
+_SONNET_RETRY_BACKOFF_SEC = 1.0
+# Haiku cost cap. Only pathological contexts (catalog explosion, huge prompt)
+# should blow this — normal calls estimate well under the cap. If the estimate
+# exceeds, skip Haiku entirely and drop straight to deterministic.
+_HAIKU_COST_CAP_THB = 0.50
+# FX used for the cost cap comparison. Directional — pulled from the same
+# quarterly review as valuation config.
+_USD_TO_THB = 35.0
 
 
 # ---------------------------------------------------------------------------
@@ -163,15 +172,138 @@ async def _load_context(session: AsyncSession) -> SelectorContext:
 # ---------------------------------------------------------------------------
 
 
+def _classify_sonnet_error(exc: BaseException) -> FallbackReason:
+    """Map an exception raised by the Sonnet call to a classified fallback reason.
+
+    We distinguish three upstream-signal buckets + a catch-all:
+    - `rate_limit`   → HTTP 429 / `anthropic.RateLimitError`
+    - `upstream_503` → HTTP 5xx / `anthropic.APIStatusError` / `InternalServerError`
+    - `timeout`      → `asyncio.TimeoutError` (wait_for tripped) or SDK
+                       `anthropic.APITimeoutError`
+    - `both_failed`  → anything else (NotImplementedError in stub mode, parser
+                       errors, network errors that don't match the above)
+
+    Pure function — keeps the 8 chaos-test cases verifiable without a full
+    route stand-up.
+    """
+    # asyncio.TimeoutError is aliased to TimeoutError in Python 3.11+.
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+
+    # Lazy import: anthropic is a heavyweight dep; callers that never touch
+    # Sonnet (deterministic-only tests) shouldn't pay the import cost here.
+    try:
+        import anthropic as _anthropic
+    except ImportError:  # pragma: no cover — SDK is a pinned dep
+        return "both_failed"
+
+    if isinstance(exc, _anthropic.APITimeoutError):
+        return "timeout"
+    if isinstance(exc, _anthropic.RateLimitError):
+        return "rate_limit"
+    if isinstance(exc, _anthropic.APIStatusError):
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 429:
+            return "rate_limit"
+        if status_code is not None and 500 <= int(status_code) < 600:
+            return "upstream_503"
+    return "both_failed"
+
+
+def _estimate_haiku_cost_thb(context: SelectorContext) -> float:
+    """Rough cost estimate for the Haiku call, in THB.
+
+    Prices the compact card catalog serialization as input tokens (at
+    ~4 chars/token) + the max_tokens output budget Haiku is configured with,
+    using published Haiku 4.5 pricing (not Sonnet). Deliberately pessimistic
+    on the output side — if the cap fires we'd rather skip Haiku than
+    surprise ourselves on the bill.
+    """
+    # Haiku 4.5 pricing (USD per 1M tokens). Sonnet pricing constants in
+    # anthropic.py are for the Sonnet path; don't reuse them here.
+    haiku_price_per_mil_input_usd = 1.00
+    haiku_price_per_mil_output_usd = 5.00
+
+    from loftly.ai.providers.anthropic_haiku import _compact_context
+
+    input_chars = len(_compact_context(context))
+    # Add a rough system + profile overhead (~500 tokens worth of chars).
+    input_tokens_est = (input_chars // 4) + 500
+    # Haiku's configured max_tokens in anthropic_haiku.py.
+    output_tokens_est = 1_500
+    cost_usd = (
+        input_tokens_est / 1_000_000 * haiku_price_per_mil_input_usd
+        + output_tokens_est / 1_000_000 * haiku_price_per_mil_output_usd
+    )
+    return cost_usd * _USD_TO_THB
+
+
+async def _call_sonnet_with_retry(
+    provider: LLMProvider,
+    payload: SelectorInput,
+    context: SelectorContext,
+) -> SelectorResult:
+    """Call Sonnet once; on `rate_limit`, sleep 1s and retry exactly once.
+
+    Any other error propagates to the caller for classification.
+    """
+    try:
+        return await asyncio.wait_for(
+            provider.card_selector(payload, context),
+            timeout=_SONNET_TIMEOUT_SEC,
+        )
+    except BaseException as exc:
+        if _classify_sonnet_error(exc) != "rate_limit":
+            raise
+        log.warning("selector_sonnet_429_retry", backoff_sec=_SONNET_RETRY_BACKOFF_SEC)
+        await asyncio.sleep(_SONNET_RETRY_BACKOFF_SEC)
+        return await asyncio.wait_for(
+            provider.card_selector(payload, context),
+            timeout=_SONNET_TIMEOUT_SEC,
+        )
+
+
+async def _deterministic_fallback(
+    payload: SelectorInput,
+    context: SelectorContext,
+    *,
+    warnings: list[str],
+    fallback_reason: FallbackReason,
+) -> SelectorResult:
+    """Run the deterministic provider and stamp fallback metadata."""
+    from loftly.ai.providers.deterministic import DeterministicProvider
+
+    rule_based: LLMProvider = DeterministicProvider()
+    result = await rule_based.card_selector(payload, context)
+    return result.model_copy(
+        update={
+            "warnings": [*result.warnings, *warnings],
+            "fallback": True,
+            "used_fallback": True,
+            "used_deterministic": True,
+            "fallback_reason": fallback_reason,
+        }
+    )
+
+
 async def _run_with_fallback(
     payload: SelectorInput,
     context: SelectorContext,
 ) -> SelectorResult:
     """Sonnet → Haiku → deterministic, honoring AI_PROMPTS.md §Failure policy.
 
-    Always returns something. `fallback=True` is stamped whenever we've dropped
-    below the primary path so callers can surface the "AI temporarily
-    unavailable" warning.
+    Policy:
+    1. Call Sonnet under a 10s asyncio timeout.
+    2. Classify any exception via `_classify_sonnet_error`.
+       - `rate_limit` → retry once after `_SONNET_RETRY_BACKOFF_SEC` seconds.
+         If the retry also fails, drop to Haiku with `fallback_reason="rate_limit"`.
+       - Everything else → drop straight to Haiku with the classified reason.
+    3. Before calling Haiku, estimate THB cost. If > `_HAIKU_COST_CAP_THB`,
+       skip Haiku entirely and land on deterministic with
+       `fallback_reason="cost_cap"`.
+    4. Call Haiku under a 5s timeout. Any error → deterministic with
+       `fallback_reason="both_failed"`.
+    5. Always return a result (deterministic provider is always available).
     """
     provider = get_provider()
 
@@ -180,13 +312,11 @@ async def _run_with_fallback(
         return await provider.card_selector(payload, context)
 
     warnings: list[str] = []
+    fallback_reason: FallbackReason | None = None
 
-    # 1) Try Sonnet.
+    # 1) Try Sonnet (with one 429-retry baked in).
     try:
-        result = await asyncio.wait_for(
-            provider.card_selector(payload, context),
-            timeout=_SONNET_TIMEOUT_SEC,
-        )
+        result = await _call_sonnet_with_retry(provider, payload, context)
         if _validate_earning_consistency(result, context):
             return result
         # Quality gate failed once — retry; if still bad, fall through to Haiku.
@@ -198,11 +328,32 @@ async def _run_with_fallback(
         if _validate_earning_consistency(result, context):
             return result
         warnings.append("quality_gate_drift")
-    except (TimeoutError, NotImplementedError, Exception) as exc:
-        log.warning("selector_sonnet_fallback", error=str(exc)[:200])
-        warnings.append("sonnet_fallback")
+        fallback_reason = "both_failed"
+    except BaseException as exc:
+        fallback_reason = _classify_sonnet_error(exc)
+        log.warning(
+            "selector_sonnet_fallback",
+            error=str(exc)[:200],
+            reason=fallback_reason,
+        )
+        warnings.append(f"sonnet_fallback:{fallback_reason}")
 
-    # 2) Try Haiku.
+    # 2) Cost-cap gate: skip Haiku if the estimated bill exceeds the cap.
+    estimated_thb = _estimate_haiku_cost_thb(context)
+    if estimated_thb > _HAIKU_COST_CAP_THB:
+        log.warning(
+            "selector_haiku_cost_cap_skipped",
+            estimated_thb=round(estimated_thb, 4),
+            cap_thb=_HAIKU_COST_CAP_THB,
+        )
+        return await _deterministic_fallback(
+            payload,
+            context,
+            warnings=[*warnings, f"haiku_cost_cap:{estimated_thb:.3f}THB"],
+            fallback_reason="cost_cap",
+        )
+
+    # 3) Try Haiku.
     try:
         from loftly.ai.providers.anthropic_haiku import AnthropicHaikuProvider
 
@@ -211,22 +362,25 @@ async def _run_with_fallback(
             haiku.card_selector(payload, context),
             timeout=_HAIKU_TIMEOUT_SEC,
         )
-        result = result.model_copy(update={"warnings": [*result.warnings, *warnings]})
-        return result
-    except (TimeoutError, NotImplementedError, Exception) as exc:
+        # Haiku succeeded: stamp used_fallback + the classified Sonnet reason.
+        return result.model_copy(
+            update={
+                "warnings": [*result.warnings, *warnings],
+                "used_fallback": True,
+                "fallback_reason": fallback_reason,
+                "fallback": True,
+            }
+        )
+    except BaseException as exc:
         log.warning("selector_haiku_fallback", error=str(exc)[:200])
         warnings.append("haiku_fallback")
 
-    # 3) Deterministic last resort.
-    from loftly.ai.providers.deterministic import DeterministicProvider
-
-    rule_based: LLMProvider = DeterministicProvider()
-    result = await rule_based.card_selector(payload, context)
-    return result.model_copy(
-        update={
-            "warnings": [*result.warnings, *warnings, "AI temporarily unavailable"],
-            "fallback": True,
-        }
+    # 4) Deterministic last resort — both LLMs failed.
+    return await _deterministic_fallback(
+        payload,
+        context,
+        warnings=[*warnings, "AI temporarily unavailable"],
+        fallback_reason="both_failed",
     )
 
 
@@ -329,6 +483,9 @@ async def _stream_selector(result: SelectorResult) -> AsyncIterator[bytes]:
             "warnings": result.warnings,
             "llm_model": result.llm_model,
             "fallback": result.fallback,
+            "used_fallback": result.used_fallback,
+            "fallback_reason": result.fallback_reason,
+            "used_deterministic": result.used_deterministic,
             "rationale_en": result.rationale_en,
         },
     )

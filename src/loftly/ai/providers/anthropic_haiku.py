@@ -93,7 +93,10 @@ class AnthropicHaikuProvider:
         from anthropic import AsyncAnthropic
 
         settings = get_settings()
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        # max_retries=0 — the route-level `_run_with_fallback` is the
+        # authoritative policy (retry-once on Sonnet 429, then Haiku, then
+        # deterministic). SDK-level retries would double-bill + mask signals.
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=0)
 
         cards_json = _compact_context(context)
         profile_json = json.dumps(

@@ -41,8 +41,28 @@ class SelectorStackItem(BaseModel):
     reason_en: str | None = None
 
 
+FallbackReason = Literal[
+    "upstream_503",
+    "timeout",
+    "rate_limit",
+    "both_failed",
+    "cost_cap",
+]
+
+
 class SelectorResult(BaseModel):
-    """Selector response envelope — `openapi.yaml#SelectorResult`."""
+    """Selector response envelope — `openapi.yaml#SelectorResult`.
+
+    Fallback fields:
+    - `fallback` — legacy flag, True whenever we dropped below the Sonnet
+      primary path. Kept for backward compat with existing clients. New
+      callers should prefer the more specific pair below.
+    - `used_fallback` — True whenever we dropped below Sonnet (Haiku OR
+      deterministic). Mirrors the legacy `fallback` flag semantically.
+    - `fallback_reason` — classified cause of the Sonnet departure.
+    - `used_deterministic` — True only when we landed on the rule-based
+      provider (i.e. both Sonnet + Haiku failed, or cost cap skipped Haiku).
+    """
 
     session_id: str
     stack: list[SelectorStackItem]
@@ -56,4 +76,7 @@ class SelectorResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     llm_model: str
     fallback: bool = False
+    used_fallback: bool = False
+    fallback_reason: FallbackReason | None = None
+    used_deterministic: bool = False
     partial_unlock: bool = False
