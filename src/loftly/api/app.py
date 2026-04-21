@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from loftly import __version__
+from loftly.ai import get_provider, set_provider
 from loftly.api.errors import register_exception_handlers
 from loftly.api.middleware.logging import (
     RequestLoggingMiddleware,
@@ -34,6 +35,7 @@ from loftly.api.routes import (
     valuations,
     webhooks,
 )
+from loftly.core.cache import get_cache, set_cache
 from loftly.core.logging import configure_logging, get_logger
 from loftly.core.settings import get_settings
 
@@ -43,10 +45,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings)
     log = get_logger(__name__)
-    log.info("loftly_api_startup", env=settings.loftly_env, version=__version__)
+    # Prime the cache + provider singletons so request paths find them warm.
+    cache = get_cache()
+    provider = get_provider()
+    log.info(
+        "loftly_api_startup",
+        env=settings.loftly_env,
+        version=__version__,
+        llm_provider=provider.name,
+        cache=type(cache).__name__,
+    )
     try:
         yield
     finally:
+        # Clear singletons on shutdown so reload cycles get fresh instances.
+        set_cache(None)
+        set_provider(None)
         log.info("loftly_api_shutdown")
 
 

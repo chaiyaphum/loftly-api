@@ -80,7 +80,14 @@ async def test_card_detail_404_has_error_envelope(seeded_client: AsyncClient) ->
     assert body["error"]["details"] == {"slug": "does-not-exist"}
 
 
-async def test_selector_stub_returns_fallback_envelope(client: AsyncClient) -> None:
+async def test_selector_fallback_envelope_with_empty_catalog(client: AsyncClient) -> None:
+    """Selector against an empty DB returns a fallback envelope with 0 cards.
+
+    Real selector behavior (with catalog) is exercised in tests/test_selector.py
+    against `seeded_client`. This version just proves the route stays online
+    when the catalog is empty — previously a stub test, now exercising the
+    deterministic provider end-to-end.
+    """
     payload = {
         "monthly_spend_thb": 80000,
         "spend_categories": {
@@ -98,5 +105,5 @@ async def test_selector_stub_returns_fallback_envelope(client: AsyncClient) -> N
     assert resp.status_code == 200
     body = resp.json()
     assert body["fallback"] is True
-    assert body["llm_model"] == "stub"
-    assert len(body["stack"]) >= 1
+    assert body["llm_model"] == "deterministic"
+    assert isinstance(body["stack"], list)

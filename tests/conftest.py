@@ -43,8 +43,18 @@ def _reset_settings_cache() -> None:
 
     # Clear in-memory rate-limiter between tests (it's module-global).
     from loftly.api.rate_limit import AFFILIATE_CLICK_LIMITER
+    from loftly.api.routes.auth import MAGIC_LINK_LIMITER
 
     AFFILIATE_CLICK_LIMITER.reset()
+    MAGIC_LINK_LIMITER.reset()
+
+    # Cache + provider singletons are process-global; reset so each test
+    # picks up fresh state from settings.
+    from loftly.ai import set_provider
+    from loftly.core.cache import set_cache
+
+    set_cache(None)
+    set_provider(None)
 
 
 @pytest_asyncio.fixture
