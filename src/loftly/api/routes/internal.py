@@ -8,13 +8,15 @@ already carries it.
 - `GET  /v1/internal/sync/deal-harvester/last` — peek latest SyncRun.
 - `POST /v1/internal/valuation/run` — scaffold stub kept for parity.
 - `POST /v1/internal/audit-retention/run` — PDPA retention sweep (weekly cron).
+- `POST /v1/internal/content-stale-digest` — weekly content re-verification
+  digest (Mon 09:00 ICT cron).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -188,3 +190,41 @@ async def run_audit_retention(
 
     result = await run_retention(dry_run=False)
     return result.to_log_dict()
+
+
+@router.post(
+    "/content-stale-digest",
+    summary="Email the founder a weekly digest of 90-day-stale published articles",
+    response_model=None,
+)
+async def run_content_stale_digest(
+    response: Response,
+    _auth: None = Depends(require_internal_api_key),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any] | Response:
+    """Weekly content re-verification reminder.
+
+    Driven by the Cloudflare Worker cron (Mon 09:00 ICT / Mon 02:00 UTC). See
+    `loftly-scheduler/src/index.ts` for the caller wiring.
+
+    Status codes:
+    - 204 when no articles are stale (nothing to email, no body).
+    - 200 when the digest was emailed successfully.
+    - 202 when stale articles exist but Resend is not configured — we still
+      write the audit row so the ops record is preserved, but the email did
+      not leave. This matches the scheduler's expectation that 2xx = "handled,
+      don't retry".
+    """
+    from loftly.jobs.content_stale_digest import run_digest
+
+    result = await run_digest(session)
+
+    if result.count == 0:
+        # 204 No Content — no body.
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return response
+
+    payload = result.to_log_dict()
+    if not result.email_sent:
+        response.status_code = status.HTTP_202_ACCEPTED
+    return payload
