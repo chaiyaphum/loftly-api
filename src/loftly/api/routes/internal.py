@@ -106,3 +106,61 @@ async def run_valuation(
 ) -> dict[str, str]:
     """Scaffold — Phase 2 will hook into `jobs.valuation.run_all`."""
     return {"job_id": "valuation", "status": "queued"}
+
+
+@router.post(
+    "/cache-warm",
+    summary="Ping Sonnet to keep the cached card-catalog prefix alive",
+)
+async def cache_warm(
+    _auth: None = Depends(require_internal_api_key),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Cron-driven cache warmer per AI_PROMPTS.md §Cache warming.
+
+    CF Worker cron hits this every 4 min during business hours. The call
+    reuses the real AnthropicProvider's cached-context serialization so the
+    server-side prompt cache stays hot; when ANTHROPIC_API_KEY is unset we
+    short-circuit to `warmed: false` (no-op in stub mode).
+    """
+    import time
+
+    from loftly.ai.providers.anthropic import _should_use_real_anthropic
+    from loftly.api.routes.selector import _load_context
+
+    start = time.perf_counter()
+
+    if not _should_use_real_anthropic():
+        return {
+            "warmed": False,
+            "reason": "anthropic_key_not_configured",
+            "latency_ms": 0.0,
+        }
+
+    # Load context so we touch the same cached block the real path uses.
+    context = await _load_context(session)
+    from anthropic import AsyncAnthropic
+
+    from loftly.ai.providers.anthropic import (
+        SONNET_MODEL,
+        _serialize_context,
+    )
+    from loftly.core.settings import get_settings
+
+    settings = get_settings()
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    await client.messages.create(
+        model=SONNET_MODEL,
+        max_tokens=16,
+        system=[
+            {"type": "text", "text": "cache-warm"},
+            {
+                "type": "text",
+                "text": f"### CARD CATALOG + VALUATIONS\n{_serialize_context(context)}",
+                "cache_control": {"type": "ephemeral"},
+            },
+        ],
+        messages=[{"role": "user", "content": "ok"}],
+    )
+    latency_ms = (time.perf_counter() - start) * 1000.0
+    return {"warmed": True, "latency_ms": round(latency_ms, 2)}
