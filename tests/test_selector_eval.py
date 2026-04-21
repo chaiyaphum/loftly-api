@@ -21,10 +21,10 @@ FIXTURES_PATH = (
 )
 
 
-async def test_fixtures_file_exists_and_has_20_profiles() -> None:
+async def test_fixtures_file_exists_and_has_25_profiles() -> None:
     with FIXTURES_PATH.open() as f:
         data = json.load(f)
-    assert len(data["profiles"]) == 20
+    assert len(data["profiles"]) == 25
     for profile in data["profiles"]:
         assert profile["id"]
         assert profile["persona"] in {

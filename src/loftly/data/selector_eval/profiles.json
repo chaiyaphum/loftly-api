@@ -1,5 +1,5 @@
 {
-  "_comment": "Golden-set profiles per AI_PROMPTS.md §Evaluation. 20 synthetic cases covering 3 personas x 5 spend tiers x goal variations. Expected top-3 slugs use the cards from db/seed.py. Under the deterministic provider, miles-goal keeps only airline-currency cards (scb-thai-airways in the seed), cashback keeps only bank_proprietary (kbank-wisdom, uob-prvi-miles), and benefits ranks by benefits-JSON depth.",
+  "_comment": "Golden-set profiles per AI_PROMPTS.md §Evaluation. 25 synthetic cases covering 3 personas x 5 spend tiers x goal variations + 5 W23 edge-case profiles (21-25). Expected top-3 slugs use the cards from db/seed.py. Under the deterministic provider, miles-goal keeps only airline-currency cards (scb-thai-airways in the seed), cashback keeps only bank_proprietary (kbank-wisdom, uob-prvi-miles), and benefits ranks by benefits-JSON depth. Profiles 21-25 exercise edge cases (ultra-premium, provincial, JP-heavy, Gen-Z, private banking) whose aspirational target cards (Amex Platinum, KTC X-UP, TTB Absolute, KBank JCB Platinum, UOB Yolo, KTC Titanium, KBank THE WISDOM Mastercard World Elite) are mostly not yet in the seeded catalog; expected_top3_card_slugs lists aspirational slugs first, with known-seeded fallbacks appended so the Selector can still hit the top-3 when the aspirational row is missing.",
   "profiles": [
     {
       "id": "miles-30k-thai-flyer",
@@ -180,6 +180,66 @@
       "goal": {"type": "benefits", "horizon_months": 12},
       "current_cards": [],
       "expected_top3_card_slugs": ["scb-thai-airways", "kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "amex-platinum-target",
+      "persona": "miles-optimizer",
+      "monthly_spend_thb": 400000,
+      "spend_categories": {"dining": 80000, "travel": 200000, "online": 60000, "grocery": 30000, "other": 30000},
+      "goal": {"type": "miles", "currency_preference": "KF", "horizon_months": 12, "target_points": 500000},
+      "current_cards": [],
+      "notes": "Very high-spend executive, travel-heavy, goal=miles. Aspirational top pick is Amex Platinum (TH) — not yet in catalog. Fallback to the airline-currency card in the seeded catalog.",
+      "income_thb_mo": 500000,
+      "has_foreign_spend_pct": 0.35,
+      "expected_top3_card_slugs": ["amex-platinum-th", "scb-thai-airways"]
+    },
+    {
+      "id": "provincial-professional-cashback",
+      "persona": "cashback-maximizer",
+      "monthly_spend_thb": 60000,
+      "spend_categories": {"grocery": 20000, "petrol": 15000, "dining": 10000, "online": 8000, "travel": 2000, "other": 5000},
+      "goal": {"type": "cashback", "horizon_months": 12},
+      "current_cards": [],
+      "notes": "Upcountry professional, minimal travel, grocery + petrol heavy. Aspirational: KTC X-UP or TTB Absolute (both flat-cashback bank_proprietary). Neither in catalog yet — fallback to bank_proprietary seeds.",
+      "income_thb_mo": 60000,
+      "has_foreign_spend_pct": 0.02,
+      "expected_top3_card_slugs": ["ktc-x-up", "ttb-absolute", "kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "japan-otaku-jcb",
+      "persona": "miles-optimizer",
+      "monthly_spend_thb": 120000,
+      "spend_categories": {"travel": 48000, "dining": 20000, "online": 30000, "grocery": 12000, "other": 10000},
+      "goal": {"type": "miles", "currency_preference": "ANA", "horizon_months": 12, "target_points": 80000},
+      "current_cards": [],
+      "notes": "~40% spend is JPY (travel + dining in JP). Aspirational top: KBank JCB Platinum (ANA/JAL transfer). Not yet in catalog; fallback to the only airline-currency seed (scb-thai-airways / ROP).",
+      "income_thb_mo": 150000,
+      "has_foreign_spend_pct": 0.40,
+      "expected_top3_card_slugs": ["kbank-jcb-platinum", "scb-thai-airways"]
+    },
+    {
+      "id": "gen-z-starter-flexible",
+      "persona": "cashback-maximizer",
+      "monthly_spend_thb": 30000,
+      "spend_categories": {"online": 15000, "dining": 6000, "grocery": 4000, "travel": 2000, "other": 3000},
+      "goal": {"type": "cashback", "horizon_months": 24},
+      "current_cards": [],
+      "notes": "Thai Gen-Z starter — student + freelance, no formal income proof. Online-heavy spend. Goal=flexible (modeled as cashback for bank_proprietary bias). Aspirational: UOB Yolo or KTC Titanium (entry-level, low income-gate). Neither in catalog — fallback to bank_proprietary seeds.",
+      "income_thb_mo": null,
+      "has_foreign_spend_pct": 0.05,
+      "expected_top3_card_slugs": ["uob-yolo", "ktc-titanium", "kbank-wisdom", "uob-prvi-miles"]
+    },
+    {
+      "id": "private-banking-wisdom-elite",
+      "persona": "benefit-collector",
+      "monthly_spend_thb": 250000,
+      "spend_categories": {"travel": 100000, "dining": 60000, "online": 40000, "grocery": 25000, "other": 25000},
+      "goal": {"type": "benefits", "currency_preference": "K_POINT", "horizon_months": 12},
+      "current_cards": ["kbank-wisdom"],
+      "notes": "KBank THE WISDOM private-banking client, AUM THB 50M+. Goal: prestige + miles access. Aspirational: KBank THE WISDOM Mastercard World Elite — deepest-benefits card. Existing seed kbank-wisdom is the closest proxy until the World Elite variant is added.",
+      "income_thb_mo": 1000000,
+      "has_foreign_spend_pct": 0.25,
+      "expected_top3_card_slugs": ["kbank-wisdom-world-elite", "kbank-wisdom", "scb-thai-airways", "uob-prvi-miles"]
     }
   ]
 }
