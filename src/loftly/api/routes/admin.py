@@ -401,6 +401,129 @@ async def assign_mapping(
     raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, detail="not implemented")
 
 
+@router.get(
+    "/affiliate/stats",
+    summary="30-day affiliate funnel",
+)
+async def affiliate_stats(
+    _admin_id: uuid.UUID = Depends(get_current_admin_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Aggregate the last 30d of clicks + conversions into `AffiliateStats`.
+
+    Structure matches `openapi.yaml#AffiliateStats`. Commission buckets derive
+    from `affiliate_conversions.status`:
+      - pending   -> commission_pending_thb
+      - confirmed -> commission_confirmed_thb
+      - paid      -> commission_paid_thb
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import func
+
+    from loftly.db.models.affiliate import AffiliateClick, AffiliateConversion
+
+    period_days = 30
+    cutoff = datetime.now(UTC) - timedelta(days=period_days)
+
+    clicks_total = (
+        await session.execute(
+            select(func.count(AffiliateClick.click_id)).where(AffiliateClick.created_at >= cutoff)
+        )
+    ).scalar_one()
+
+    conversions_total = (
+        await session.execute(
+            select(func.count(AffiliateConversion.id)).where(
+                AffiliateConversion.received_at >= cutoff
+            )
+        )
+    ).scalar_one()
+
+    async def _commission_sum(status_: str) -> float:
+        value = (
+            await session.execute(
+                select(func.coalesce(func.sum(AffiliateConversion.commission_thb), 0)).where(
+                    AffiliateConversion.received_at >= cutoff,
+                    AffiliateConversion.status == status_,
+                )
+            )
+        ).scalar_one()
+        return float(value or 0)
+
+    commission_pending = await _commission_sum("pending")
+    commission_confirmed = await _commission_sum("confirmed")
+    commission_paid = await _commission_sum("paid")
+
+    conv_rate = float(conversions_total) / float(clicks_total) if clicks_total else 0.0
+
+    # Top-10 by card (slug) — join affiliate_clicks to cards to surface slug.
+    by_card_rows = (
+        await session.execute(
+            select(
+                CardModel.slug,
+                func.count(AffiliateClick.click_id).label("clicks"),
+            )
+            .join(CardModel, AffiliateClick.card_id == CardModel.id)
+            .where(AffiliateClick.created_at >= cutoff)
+            .group_by(CardModel.slug)
+            .order_by(func.count(AffiliateClick.click_id).desc())
+            .limit(10)
+        )
+    ).all()
+
+    by_card: list[dict[str, Any]] = []
+    for slug, clicks in by_card_rows:
+        # Conversions + commission per card.
+        conv_count = (
+            await session.execute(
+                select(func.count(AffiliateConversion.id))
+                .join(
+                    AffiliateClick,
+                    AffiliateConversion.click_id == AffiliateClick.click_id,
+                )
+                .join(CardModel, AffiliateClick.card_id == CardModel.id)
+                .where(
+                    CardModel.slug == slug,
+                    AffiliateConversion.received_at >= cutoff,
+                )
+            )
+        ).scalar_one()
+        commission_sum = (
+            await session.execute(
+                select(func.coalesce(func.sum(AffiliateConversion.commission_thb), 0))
+                .join(
+                    AffiliateClick,
+                    AffiliateConversion.click_id == AffiliateClick.click_id,
+                )
+                .join(CardModel, AffiliateClick.card_id == CardModel.id)
+                .where(
+                    CardModel.slug == slug,
+                    AffiliateConversion.received_at >= cutoff,
+                )
+            )
+        ).scalar_one()
+        by_card.append(
+            {
+                "card_slug": slug,
+                "clicks": int(clicks),
+                "conversions": int(conv_count),
+                "commission_thb": float(commission_sum or 0),
+            }
+        )
+
+    return {
+        "period_days": period_days,
+        "clicks": int(clicks_total),
+        "conversions": int(conversions_total),
+        "conversion_rate": conv_rate,
+        "commission_pending_thb": commission_pending,
+        "commission_confirmed_thb": commission_confirmed,
+        "commission_paid_thb": commission_paid,
+        "by_card": by_card,
+    }
+
+
 @router.get("/affiliate/export.csv", summary="CSV dump of last 30d clicks + conversions")
 async def affiliate_export(_admin_id: uuid.UUID = Depends(get_current_admin_id)) -> None:
     raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, detail="not implemented")

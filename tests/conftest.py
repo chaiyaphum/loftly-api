@@ -36,10 +36,15 @@ TEST_ADMIN_ID = uuid.UUID("00000000-0000-4000-8000-000000000009")
 
 @pytest.fixture(autouse=True)
 def _reset_settings_cache() -> None:
-    """Ensure each test sees a fresh settings snapshot."""
+    """Ensure each test sees a fresh settings snapshot + clean rate-limit state."""
     get_settings.cache_clear()
     get_engine.cache_clear()
     get_sessionmaker.cache_clear()
+
+    # Clear in-memory rate-limiter between tests (it's module-global).
+    from loftly.api.rate_limit import AFFILIATE_CLICK_LIMITER
+
+    AFFILIATE_CLICK_LIMITER.reset()
 
 
 @pytest_asyncio.fixture

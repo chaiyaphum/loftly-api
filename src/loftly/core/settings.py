@@ -6,10 +6,11 @@ Required vars fail fast at startup; optional vars warn but don't block dev.
 
 from __future__ import annotations
 
+import json
 import logging
 import warnings
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -74,8 +75,32 @@ class Settings(BaseSettings):
     # --- Email ---
     resend_api_key: str | None = Field(default=None)
 
+    # --- Affiliate partner HMAC secrets ---
+    # JSON map partner_id -> shared_secret. Example:
+    #   AFFILIATE_PARTNER_SECRETS='{"bigbank-affiliate":"xxx"}'
+    # Parsed from env on startup; missing partner_id -> 401 on webhook.
+    affiliate_partner_secrets: dict[str, str] = Field(default_factory=dict)
+
     # --- Prompt versioning ---
     loftly_prompt_version_override: str | None = Field(default=None)
+
+    @field_validator("affiliate_partner_secrets", mode="before")
+    @classmethod
+    def _parse_partner_secrets(cls, v: Any) -> Any:
+        """Accept either a JSON string (from env) or a dict (from tests)."""
+        if v is None or v == "":
+            return {}
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    'AFFILIATE_PARTNER_SECRETS must be valid JSON (e.g. \'{"p":"s"}\').'
+                ) from exc
+            if not isinstance(parsed, dict):
+                raise ValueError("AFFILIATE_PARTNER_SECRETS must decode to an object.")
+            return parsed
+        return v
 
     @field_validator("database_url")
     @classmethod
