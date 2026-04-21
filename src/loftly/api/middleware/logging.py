@@ -23,8 +23,25 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from loftly.core.logging import get_logger
+from loftly.observability.prometheus import http_request_observer
 
 log = get_logger(__name__)
+
+
+def _route_template(request: Request) -> str:
+    """Best-effort route template for metric labels.
+
+    Prefer the matched route's `path` (e.g. `/v1/cards/{card_id}`) so the
+    cardinality stays bounded. If FastAPI's route matcher hasn't populated
+    the scope yet (rare — happens on 404 before dispatch), fall back to the
+    raw URL path, which at worst balloons Prometheus storage but doesn't
+    break the scrape.
+    """
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if isinstance(path, str) and path:
+        return path
+    return request.url.path
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -50,8 +67,24 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             status_code = response.status_code
             return response
         finally:
-            latency_ms = (time.perf_counter() - start) * 1000.0
+            duration_sec = time.perf_counter() - start
+            latency_ms = duration_sec * 1000.0
             user_id = getattr(request.state, "user_id", None)
+            # Prometheus export — templated route avoids cardinality blowup
+            # from ids-in-paths. `/metrics` scrape is excluded to prevent
+            # self-referential counter churn during rapid scrape intervals.
+            route_label = _route_template(request)
+            if route_label != "/metrics":
+                try:
+                    http_request_observer(
+                        route=route_label,
+                        method=request.method,
+                        status_code=status_code,
+                        duration_seconds=duration_sec,
+                    )
+                except Exception as exc:
+                    # Never let an observability failure break the request.
+                    log.warning("metrics_observer_failed", exc_info=True, err=str(exc))
             log.info(
                 "request.completed",
                 method=request.method,

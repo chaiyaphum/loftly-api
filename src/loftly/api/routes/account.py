@@ -39,6 +39,7 @@ from loftly.jobs.data_export import (
     run_export,
     verify_download_token,
 )
+from loftly.observability.prometheus import dsar_observer
 
 router = APIRouter(prefix="/v1/account", tags=["account"])
 
@@ -92,6 +93,9 @@ async def request_export(
     session.add(job)
     await session.commit()
     await session.refresh(job)
+
+    # DSAR tracking: export request opened.
+    dsar_observer("export", "opened")
 
     background_tasks.add_task(run_export, job.id)
     return {"job_id": str(job.id), "status": "queued"}
@@ -278,6 +282,10 @@ async def request_delete(
     session.add(job)
     await session.commit()
     await session.refresh(job)
+
+    # DSAR tracking: delete request opened.
+    dsar_observer("delete", "opened")
+
     return _delete_status_payload(job)
 
 
@@ -315,6 +323,15 @@ async def cancel_delete(
         user.deleted_at = None
     await session.commit()
     await session.refresh(job)
+
+    # DSAR tracking: delete request closed (cancelled) — count resolution time
+    # so the PDPA dashboard shows short turnarounds as well as long ones.
+    created = _as_aware(job.created_at)
+    resolution_days = (
+        max(0.0, (now - created).total_seconds() / 86_400.0) if created is not None else None
+    )
+    dsar_observer("delete", "closed", resolution_days=resolution_days)
+
     return _delete_status_payload(job)
 
 

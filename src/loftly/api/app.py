@@ -7,8 +7,9 @@ Pydantic schemas generated from `mvp/artifacts/openapi.yaml`.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +33,7 @@ from loftly.api.routes import (
     consent,
     health,
     internal,
+    metrics,
     promos,
     selector,
     valuations,
@@ -40,8 +42,37 @@ from loftly.api.routes import (
 from loftly.core.cache import get_cache, set_cache
 from loftly.core.logging import configure_logging, get_logger
 from loftly.core.settings import get_settings
+from loftly.db.engine import get_engine
 from loftly.observability.langfuse import init_langfuse
+from loftly.observability.prometheus import db_pool_gauge_snapshot
 from loftly.observability.sentry import init_sentry
+
+# Sample interval for the DB-pool gauge snapshot. Picked to match the Grafana
+# api-latency dashboard refresh (30s); shorter is wasted work.
+DB_POOL_SNAPSHOT_INTERVAL_SEC = 30.0
+
+
+async def _db_pool_snapshot_loop(log: object) -> None:
+    """Periodically update DB-pool gauges.
+
+    Errors are logged and swallowed — the loop must never die, because a
+    broken snapshot task would silently freeze the pool saturation panel on
+    the dashboard. Cancellation is the only legitimate exit.
+    """
+    while True:
+        try:
+            db_pool_gauge_snapshot(get_engine())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # structlog's .warning takes exc_info=True like stdlib; typed as
+            # `object` here to avoid a structlog import just for typing.
+            with suppress(Exception):
+                log.warning("db_pool_snapshot_failed", exc_info=True)  # type: ignore[attr-defined]
+        try:
+            await asyncio.sleep(DB_POOL_SNAPSHOT_INTERVAL_SEC)
+        except asyncio.CancelledError:
+            raise
 
 
 @asynccontextmanager
@@ -71,10 +102,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         langfuse=bool(settings.langfuse_secret_key and settings.langfuse_host),
         resend=bool(settings.resend_api_key),
     )
+    # Background DB-pool gauge sampler — survives the life of the app.
+    # Skipped in the test env because the aiosqlite StaticPool has nothing
+    # useful to report and the loop clutters test logs.
+    pool_task: asyncio.Task[None] | None = None
+    if not settings.is_test:
+        pool_task = asyncio.create_task(
+            _db_pool_snapshot_loop(log), name="db_pool_snapshot_loop"
+        )
     try:
         yield
     finally:
         # Clear singletons on shutdown so reload cycles get fresh instances.
+        if pool_task is not None:
+            pool_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await pool_task
         set_cache(None)
         set_provider(None)
         log.info("loftly_api_shutdown")
@@ -127,6 +170,10 @@ def create_app() -> FastAPI:
 
     # Health probes live at the root, not under /v1 — matches openapi.yaml.
     app.include_router(health.router)
+
+    # Prometheus scrape surface — also at the root; contract in
+    # `mvp/artifacts/grafana/README.md`.
+    app.include_router(metrics.router)
 
     # Versioned API surface.
     app.include_router(auth.router)

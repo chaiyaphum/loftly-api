@@ -24,6 +24,7 @@ from loftly.db.models.job import Job
 from loftly.db.models.selector_session import SelectorSession
 from loftly.db.models.user import User
 from loftly.db.models.user_card import UserCard
+from loftly.observability.prometheus import dsar_observer
 
 log = get_logger(__name__)
 
@@ -132,6 +133,16 @@ async def run_due_purges() -> list[dict[str, object]]:
             counters = await purge_user(session, job.user_id)
             job.status = "done"
             job.finished_at = now
+            # DSAR metric: record days from request creation to final purge.
+            created = job.created_at
+            if created is not None:
+                created_aware = (
+                    created if created.tzinfo is not None else created.replace(tzinfo=UTC)
+                )
+                days = max(0.0, (now - created_aware).total_seconds() / 86_400.0)
+                dsar_observer("delete", "closed", resolution_days=days)
+            else:
+                dsar_observer("delete", "closed")
             results.append(
                 {
                     "job_id": str(job.id),
