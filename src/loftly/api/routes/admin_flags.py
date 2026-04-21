@@ -39,6 +39,16 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "expected_variants": ["control", "variant_a"],
         "expected_rollout_pct": 100,
     },
+    {
+        "key": "typhoon_nlu_spend",
+        "description": (
+            "Free-text Thai spend parser (Typhoon / SambaNova) gating "
+            "POST /v1/selector/parse-nlu. Env override: LOFTLY_TYPHOON_NLU_ENABLED."
+        ),
+        "type": "boolean",
+        "expected_variants": [True, False],
+        "expected_rollout_pct": 0,
+    },
 ]
 
 

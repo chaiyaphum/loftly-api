@@ -27,8 +27,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from loftly.ai import LLMProvider, SelectorContext, get_provider
+from loftly.ai.providers.typhoon import (
+    TyphoonMalformedOutputError,
+    TyphoonProvider,
+    TyphoonUnavailableError,
+)
 from loftly.api.errors import LoftlyError
 from loftly.core.cache import get_cache
+from loftly.core.feature_flags import FeatureFlags
 from loftly.core.logging import get_logger
 from loftly.core.settings import Settings, get_settings
 from loftly.db.engine import get_session
@@ -36,7 +42,11 @@ from loftly.db.models.card import Card as CardModel
 from loftly.db.models.loyalty_currency import LoyaltyCurrency
 from loftly.db.models.point_valuation import PointValuation
 from loftly.db.models.selector_session import SelectorSession
+from loftly.observability.posthog import capture as posthog_capture
+from loftly.observability.posthog import hash_distinct_id
+from loftly.prompts.typhoon_nlu_spend import prompt_slug as nlu_prompt_slug
 from loftly.schemas.selector import SelectorInput, SelectorResult
+from loftly.schemas.spend_nlu import SpendNLURequest, SpendNLUResponse
 
 router = APIRouter(prefix="/v1/selector", tags=["selector"])
 log = get_logger(__name__)
@@ -393,6 +403,117 @@ async def submit(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
     return result
+
+
+# ---------------------------------------------------------------------------
+# W19: Typhoon NLU spend parser — `POST /v1/selector/parse-nlu`.
+#
+# Free-text Thai → structured SpendProfile. Behind the `typhoon_nlu_spend`
+# feature flag. Flag OFF or key unset → 501 so the frontend knows to hide the
+# free-text option and fall back to the structured form.
+#
+# Declared before `GET /{session_id}` so the literal path wins route matching
+# even though uuid.UUID parsing would reject "parse-nlu" anyway — belt + braces.
+# ---------------------------------------------------------------------------
+
+_TYPHOON_FLAG_KEY = "typhoon_nlu_spend"
+# Env-var fallback when the PostHog A/B harness isn't reachable or when a
+# developer wants a quick flip. Flag integration order:
+#   1) `LOFTLY_TYPHOON_NLU_ENABLED` env var — boolean override (dev + staging A/B)
+#   2) PostHog (if POSTHOG_PROJECT_API_KEY set) — sampled / gradual rollout
+#   3) default OFF
+_TYPHOON_ENV_OVERRIDE = "LOFTLY_TYPHOON_NLU_ENABLED"
+
+
+async def _typhoon_flag_enabled(request: Request) -> bool:
+    """Return True if the `typhoon_nlu_spend` flag is ON for this caller."""
+    import os
+
+    override = os.environ.get(_TYPHOON_ENV_OVERRIDE)
+    if override is not None:
+        return override.strip().lower() in {"1", "true", "yes", "on"}
+
+    client_host = request.client.host if request.client else "anon"
+    distinct_id = hash_distinct_id(client_host, salt="typhoon-nlu")
+    flags = FeatureFlags()
+    return await flags.is_enabled(_TYPHOON_FLAG_KEY, distinct_id, default=False)
+
+
+@router.post(
+    "/parse-nlu",
+    response_model=SpendNLUResponse,
+    summary="Parse free-text Thai spend description into a structured profile",
+)
+async def parse_nlu(
+    body: SpendNLURequest,
+    request: Request,
+) -> SpendNLUResponse:
+    """Behind `typhoon_nlu_spend`. Returns 501 when flag OFF or key unset."""
+    if not await _typhoon_flag_enabled(request):
+        raise LoftlyError(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            code="typhoon_nlu_disabled",
+            message_en="Free-text Thai spend parser is not enabled.",
+            message_th="โหมดกรอกข้อความอิสระยังไม่เปิดให้ใช้งาน",
+        )
+
+    provider = TyphoonProvider()
+    import httpx as _httpx
+
+    try:
+        profile, confidence, duration_ms = await provider.parse_spend_nlu(body.text_th)
+    except TyphoonUnavailableError as exc:
+        log.warning("typhoon_unavailable", error=str(exc)[:200])
+        raise LoftlyError(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            code="typhoon_nlu_disabled",
+            message_en="Free-text Thai spend parser is not available right now.",
+            message_th="โหมดกรอกข้อความอิสระไม่พร้อมใช้งานในขณะนี้",
+        ) from exc
+    except TyphoonMalformedOutputError as exc:
+        log.warning("typhoon_malformed_output", error=str(exc)[:200])
+        raise LoftlyError(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            code="typhoon_malformed_output",
+            message_en="Typhoon returned an output we could not parse. Try rewording.",
+            message_th="ไม่สามารถตีความข้อความได้ กรุณาลองใหม่",
+        ) from exc
+    except _httpx.TimeoutException as exc:
+        log.warning("typhoon_timeout_httpx")
+        raise LoftlyError(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            code="typhoon_timeout",
+            message_en="Typhoon parser timed out. Please try again.",
+            message_th="หมดเวลารอการประมวลผล กรุณาลองใหม่",
+        ) from exc
+    except TimeoutError as exc:
+        log.warning("typhoon_timeout")
+        raise LoftlyError(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            code="typhoon_timeout",
+            message_en="Typhoon parser timed out. Please try again.",
+            message_th="หมดเวลารอการประมวลผล กรุณาลองใหม่",
+        ) from exc
+
+    # Fire-and-forget PostHog event (hashed anon id).
+    client_host = request.client.host if request.client else None
+    await posthog_capture(
+        "typhoon_nlu_parsed",
+        distinct_id=hash_distinct_id(client_host, salt="typhoon-nlu"),
+        properties={
+            "prompt": nlu_prompt_slug(),
+            "duration_ms": duration_ms,
+            "confidence": round(confidence, 3),
+            "chars_in": len(body.text_th),
+        },
+    )
+
+    return SpendNLUResponse(
+        profile=profile,
+        confidence=confidence,
+        model=provider.model,
+        duration_ms=duration_ms,
+    )
 
 
 @router.get(
