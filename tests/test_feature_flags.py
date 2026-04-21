@@ -124,9 +124,16 @@ async def test_admin_flags_endpoint_lists_known_flags(
     assert body["posthog_configured"] is False  # test env has no key set
     keys = [f["key"] for f in body["flags"]]
     assert "selector_cta_copy" in keys
+    assert "landing_hero_cta" in keys
     # Probe value falls back to "control" when PostHog isn't configured.
     cta = next(f for f in body["flags"] if f["key"] == "selector_cta_copy")
     assert cta["probe_value"] == "control"
+    # `landing_hero_cta` is also multivariate with "control" as its default, so
+    # the probe falls back to "control" in the unconfigured-PostHog test env.
+    hero = next(f for f in body["flags"] if f["key"] == "landing_hero_cta")
+    assert hero["type"] == "multivariate"
+    assert hero["probe_value"] == "control"
+    assert hero["expected_variants"] == ["control", "variant_benefit_led", "variant_urgency"]
 
 
 async def test_admin_flags_requires_admin(
