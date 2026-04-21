@@ -1,26 +1,69 @@
-"""Auth dependencies — stubs for Phase 1 scaffold.
+"""Auth dependencies — Phase 1 scaffold with a usable current-user hook.
 
-Real JWT + API-key verification lands in Week 2 per DEV_PLAN.md. Until then
-protected routes raise `HTTPException(501)` so contracts remain honest.
+Real JWT issuance + refresh rotation still lands later; right now we expose a
+single `get_current_user_id` dependency that decodes a bearer token using
+`settings.jwt_signing_key`. Tests bypass it via `app.dependency_overrides`.
 """
 
 from __future__ import annotations
 
-from fastapi import Header, HTTPException, status
+import uuid
+
+from fastapi import Depends, Header, HTTPException, status
+from jose import JWTError, jwt
+
+from loftly.core.settings import Settings, get_settings
+
+
+async def get_current_user_id(
+    authorization: str | None = Header(default=None),
+    settings: Settings = Depends(get_settings),
+) -> uuid.UUID:
+    """Extract `sub` from a bearer JWT, returning the user UUID.
+
+    Tests override this via `app.dependency_overrides[get_current_user_id]`
+    so routes can be exercised without a real token. In prod this will be
+    the authoritative gate.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing bearer token.",
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_signing_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token.",
+        ) from exc
+
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing `sub` claim.",
+        )
+    try:
+        return uuid.UUID(str(sub))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token `sub` is not a UUID.",
+        ) from exc
 
 
 async def require_user_jwt(
-    authorization: str | None = Header(default=None),
+    _: uuid.UUID = Depends(get_current_user_id),
 ) -> None:
-    """Dependency for routes tagged `userJWT` in openapi.yaml.
-
-    TODO(week-2): verify HS256 JWT with `settings.jwt_signing_key`, decode
-    `sub`/`role`/`consents`, attach a `CurrentUser` object to request.state.
-    """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="JWT authentication not yet implemented",
-    )
+    """Dependency for routes tagged `userJWT` in openapi.yaml."""
+    # The resolver above does the work; presence = ok.
+    return None
 
 
 async def require_admin_jwt(
