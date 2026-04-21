@@ -246,7 +246,12 @@ class AnthropicProvider:
         from anthropic import AsyncAnthropic
 
         settings = get_settings()
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        # max_retries=0: the route-level `_run_with_fallback` owns retry +
+        # fallback policy (Sonnet → Haiku → deterministic). Letting the SDK
+        # transparently retry would (a) mask 429/503/timeout signals the
+        # classifier needs and (b) burn our 10s wait_for budget before the
+        # fallback path ever kicks in.
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=0)
 
         cached_context = _serialize_context(context)
         user_profile = json.dumps(
