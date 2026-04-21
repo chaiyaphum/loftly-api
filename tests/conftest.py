@@ -49,10 +49,12 @@ def _reset_settings_cache() -> None:
     from loftly.api.rate_limit import AFFILIATE_CLICK_LIMITER
     from loftly.api.routes.account import DATA_EXPORT_LIMITER
     from loftly.api.routes.auth import MAGIC_LINK_LIMITER
+    from loftly.api.routes.waitlist import reset_limiter as reset_waitlist_limiter
 
     AFFILIATE_CLICK_LIMITER.reset()
     MAGIC_LINK_LIMITER.reset()
     DATA_EXPORT_LIMITER.reset()
+    reset_waitlist_limiter()
 
     # Cache + provider singletons are process-global; reset so each test
     # picks up fresh state from settings.
