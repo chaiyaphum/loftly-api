@@ -123,7 +123,7 @@ packages = ["loftly"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["jose.*", "aiosqlite.*"]
+module = ["jose.*", "aiosqlite.*", "boto3", "boto3.*", "botocore.*", "asyncpg", "asyncpg.*", "mypy_boto3_s3.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
