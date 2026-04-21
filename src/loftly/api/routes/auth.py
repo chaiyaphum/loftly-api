@@ -15,6 +15,7 @@ OAuth + refresh + logout remain 501 stubs pending provider app credentials
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -29,12 +30,14 @@ from loftly.api.errors import LoftlyError
 from loftly.api.jwt_util import Locale, Role, TokenPair, issue_token_pair
 from loftly.api.rate_limit import FixedWindowLimiter
 from loftly.auth.oauth import OAuthExchangeFailed, OAuthNotConfigured, Provider
+from loftly.core.locale import detect_locale
 from loftly.core.logging import get_logger
 from loftly.core.settings import Settings, get_settings
 from loftly.db.engine import get_session
 from loftly.db.models.selector_session import SelectorSession
 from loftly.db.models.user import User
-from loftly.notifications.email import send_magic_link
+from loftly.notifications.welcome_email import send_welcome_email
+from loftly.schemas.selector import SelectorResult
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 log = get_logger(__name__)
@@ -46,6 +49,11 @@ _MAGIC_LINK_PURPOSE = "magic_link"
 MAGIC_LINK_LIMITER = FixedWindowLimiter(max_calls=5, window_sec=60)
 # Web-facing consume URL; the web app reads `?token=...` and POSTs to /consume.
 _MAGIC_LINK_BASE_URL = "https://loftly.co.th/auth/magic-link/consume"
+
+# Strong references to in-flight welcome-email tasks so Python's GC doesn't
+# reap them mid-send. Entries self-remove via `add_done_callback`. Module-level
+# so the set persists across requests — it's the same process regardless.
+_IN_FLIGHT_WELCOME_TASKS: set[asyncio.Task[None]] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -159,12 +167,22 @@ def _client_ip(request: Request) -> str:
 async def magic_link_request(
     payload: MagicLinkRequestBody,
     request: Request,
+    session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> MagicLinkRequestResponse:
-    """Issue a 15-min signed token, "send" via structlog (Resend wiring TBD).
+    """Issue a 15-min signed token; kick off personalized welcome email (§2).
 
     Rate-limited to 5/min per client IP. On limit, return 429 per
     API_CONTRACT.md §Rate limits.
+
+    POST_V1 §2 changes:
+    - Detect locale from `Accept-Language` (no user row yet at this point, so
+      no preferred-locale override available).
+    - If `session_id` is supplied AND resolves to a `selector_sessions` row →
+      hand the cached SelectorResult to `send_welcome_email` for the rich
+      top-3 body. Otherwise fall back to the v1 static magic-link template.
+    - Send is fire-and-forget (`asyncio.create_task`) so the endpoint stays
+      under its 500ms budget regardless of LLM + Resend latency.
     """
     ip = _client_ip(request)
     if not MAGIC_LINK_LIMITER.allow(ip):
@@ -178,20 +196,67 @@ async def magic_link_request(
     token = _issue_magic_link_token(payload.email, payload.session_id, settings)
     magic_link_url = f"{_MAGIC_LINK_BASE_URL}?token={token}"
 
-    # Always log — Resend path just adds a real send on top.
+    accept_lang = request.headers.get("accept-language")
+    locale = detect_locale(accept_lang)
+
+    # Attempt to load the selector envelope if a session_id was provided. On
+    # any lookup failure (missing row, JSON shape drift) we skip personalization
+    # and send the static template — strict v1 parity for the non-selector flow.
+    selector_result: SelectorResult | None = None
+    if payload.session_id is not None:
+        try:
+            row = (
+                (
+                    await session.execute(
+                        select(SelectorSession).where(
+                            SelectorSession.id == payload.session_id
+                        )
+                    )
+                )
+                .scalars()
+                .one_or_none()
+            )
+            if row is not None and row.output:
+                selector_result = SelectorResult.model_validate(row.output)
+        except Exception as exc:
+            log.warning(
+                "welcome_email_selector_lookup_failed",
+                session_id=str(payload.session_id),
+                error=str(exc)[:200],
+            )
+
+    # Always log the magic-link issuance — independent of which send path runs.
     log.info(
         "magic_link_issued",
         email=payload.email,
         session_id=str(payload.session_id) if payload.session_id else None,
         magic_link=magic_link_url,
         ttl_sec=_MAGIC_LINK_TTL_SECONDS,
+        locale=locale,
+        personalized=selector_result is not None,
     )
-    # Fire-and-forget email; failures are logged inside send_magic_link but
-    # we don't surface them (202 ACCEPTED semantics).
-    try:
-        await send_magic_link(payload.email, magic_link_url, locale="th")
-    except Exception as exc:
-        log.warning("magic_link_email_failed", error=str(exc)[:200])
+
+    # Fire-and-forget — don't block the 202 response on LLM + Resend latency.
+    # When `selector_result` is None the composer falls back to the v1 magic-link
+    # static template, preserving v1 behavior for non-selector-flow requests.
+    # We stash the task reference on the app state so RUF006 is satisfied and
+    # so tests can (in theory) await it; for prod traffic the reference drops
+    # at next request.
+    task = asyncio.create_task(
+        send_welcome_email(
+            email=payload.email,
+            magic_link_url=magic_link_url,
+            selector_result=selector_result,
+            locale=locale,
+            session_id=str(payload.session_id) if payload.session_id else None,
+        ),
+        name="welcome_email_send",
+    )
+    # Prevent the task from being garbage-collected before it completes.
+    # FastAPI's lifecycle doesn't own ad-hoc tasks; a strong ref here is the
+    # documented workaround.
+    _IN_FLIGHT_WELCOME_TASKS.add(task)
+    task.add_done_callback(_IN_FLIGHT_WELCOME_TASKS.discard)
     return MagicLinkRequestResponse(
         message_th="ส่งลิงก์ไปที่อีเมลแล้ว",
         message_en="Magic link sent to your email.",
