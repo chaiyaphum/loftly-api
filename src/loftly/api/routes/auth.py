@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 from fastapi import APIRouter, Depends, Request, status
 from jose import JWTError, jwt
@@ -27,11 +28,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loftly.api.errors import LoftlyError
 from loftly.api.jwt_util import Locale, Role, TokenPair, issue_token_pair
 from loftly.api.rate_limit import FixedWindowLimiter
+from loftly.auth.oauth import OAuthExchangeFailed, OAuthNotConfigured, Provider
 from loftly.core.logging import get_logger
 from loftly.core.settings import Settings, get_settings
 from loftly.db.engine import get_session
 from loftly.db.models.selector_session import SelectorSession
 from loftly.db.models.user import User
+from loftly.notifications.email import send_magic_link
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 log = get_logger(__name__)
@@ -175,7 +178,7 @@ async def magic_link_request(
     token = _issue_magic_link_token(payload.email, payload.session_id, settings)
     magic_link_url = f"{_MAGIC_LINK_BASE_URL}?token={token}"
 
-    # Phase 1: log-only delivery. Resend wiring tracked as a manual action.
+    # Always log — Resend path just adds a real send on top.
     log.info(
         "magic_link_issued",
         email=payload.email,
@@ -183,6 +186,12 @@ async def magic_link_request(
         magic_link=magic_link_url,
         ttl_sec=_MAGIC_LINK_TTL_SECONDS,
     )
+    # Fire-and-forget email; failures are logged inside send_magic_link but
+    # we don't surface them (202 ACCEPTED semantics).
+    try:
+        await send_magic_link(payload.email, magic_link_url, locale="th")
+    except Exception as exc:
+        log.warning("magic_link_email_failed", error=str(exc)[:200])
     return MagicLinkRequestResponse(
         message_th="ส่งลิงก์ไปที่อีเมลแล้ว",
         message_en="Magic link sent to your email.",
@@ -264,19 +273,197 @@ async def magic_link_consume(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/oauth/callback", summary="Complete OAuth and mint JWT pair")
-async def oauth_callback() -> None:
-    raise _not_implemented()
+class OAuthCallbackBody(BaseModel):
+    """OAuth callback payload — see openapi.yaml#OAuthCallback."""
+
+    provider: Provider
+    code: str
+    redirect_uri: str
+    session_id: uuid.UUID | None = Field(default=None)
 
 
-@router.post("/refresh", summary="Rotate access token")
-async def refresh() -> None:
-    raise _not_implemented()
+@router.post(
+    "/oauth/callback",
+    response_model=TokenPairResponse,
+    summary="Complete OAuth and mint JWT pair",
+)
+async def oauth_callback(
+    payload: OAuthCallbackBody,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> TokenPairResponse:
+    """Exchange code via provider, upsert user, bind session, mint tokens."""
+    # Dispatch lazily — keeps test paths from importing google-auth etc.
+    if payload.provider == "google":
+        from loftly.auth.oauth.google import exchange_code
+    elif payload.provider == "apple":
+        from loftly.auth.oauth.apple import exchange_code
+    elif payload.provider == "line":
+        from loftly.auth.oauth.line import exchange_code
+    else:  # pragma: no cover — pydantic already narrowed the literal
+        raise _not_implemented()
+
+    try:
+        info = await exchange_code(payload.code, payload.redirect_uri)
+    except OAuthNotConfigured as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="oauth_provider_unavailable",
+            message_en=f"OAuth provider {exc.provider} not configured.",
+            message_th="ผู้ให้บริการ OAuth ยังไม่เปิดใช้งาน",
+        ) from exc
+    except OAuthExchangeFailed as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="oauth_exchange_failed",
+            message_en=str(exc),
+            message_th="ไม่สามารถยืนยันตัวตนกับผู้ให้บริการได้",
+        ) from exc
+
+    # Upsert on (oauth_provider, oauth_subject) — the unique constraint key.
+    existing = (
+        (
+            await session.execute(
+                select(User).where(
+                    User.oauth_provider == info.provider,
+                    User.oauth_subject == info.subject,
+                )
+            )
+        )
+        .scalars()
+        .one_or_none()
+    )
+    if existing is None:
+        user = User(
+            email=info.email or f"{info.provider}-{info.subject}@loftly.local",
+            oauth_provider=info.provider,
+            oauth_subject=info.subject,
+            preferred_locale="th",
+        )
+        session.add(user)
+        await session.flush()
+    else:
+        user = existing
+
+    # Bind any dangling selector_session.
+    if payload.session_id is not None:
+        selector_row = (
+            (
+                await session.execute(
+                    select(SelectorSession).where(SelectorSession.id == payload.session_id)
+                )
+            )
+            .scalars()
+            .one_or_none()
+        )
+        if selector_row is not None and selector_row.user_id is None:
+            selector_row.user_id = user.id
+            selector_row.bound_at = datetime.now(UTC)
+
+    await session.commit()
+
+    pair = issue_token_pair(
+        user_id=user.id,
+        role="user",
+        locale="th",
+        settings=settings,
+    )
+    return TokenPairResponse(
+        access_token=pair.access_token,
+        refresh_token=pair.refresh_token,
+        expires_in=pair.expires_in,
+        user=TokenPairUser(
+            id=user.id,
+            email=user.email,
+            locale="th",
+            role="user",
+        ),
+    )
 
 
-@router.post("/logout", summary="Invalidate refresh token")
-async def logout() -> None:
-    raise _not_implemented()
+class _RefreshBody(BaseModel):
+    refresh_token: str
+
+
+@router.post("/refresh", response_model=TokenPairResponse, summary="Rotate access token")
+async def refresh(
+    payload: _RefreshBody,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> TokenPairResponse:
+    """Verify refresh JWT, issue a fresh access+refresh pair.
+
+    Phase 1 refresh tokens are stateless — we rely on expiry alone. Adding a
+    revocation list is tracked as a MANUAL_ACTION.
+    """
+    try:
+        claims = jwt.decode(
+            payload.refresh_token,
+            settings.jwt_signing_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except JWTError as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="invalid_refresh",
+            message_en="Refresh token is invalid or expired.",
+            message_th="Refresh token ไม่ถูกต้องหรือหมดอายุ",
+        ) from exc
+
+    if claims.get("type") != "refresh":
+        raise LoftlyError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="invalid_refresh",
+            message_en="Token is not a refresh token.",
+            message_th="Token ไม่ถูกต้อง",
+        )
+    try:
+        user_id = uuid.UUID(str(claims["sub"]))
+    except (KeyError, ValueError) as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="invalid_refresh",
+            message_en="Token subject malformed.",
+            message_th="Token ไม่ถูกต้อง",
+        ) from exc
+
+    user = (await session.execute(select(User).where(User.id == user_id))).scalars().one_or_none()
+    if user is None or user.deleted_at is not None:
+        raise LoftlyError(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            code="invalid_refresh",
+            message_en="User not found or deleted.",
+            message_th="ไม่พบบัญชี",
+        )
+
+    pair = issue_token_pair(
+        user_id=user.id,
+        role=cast(Role, user.role),
+        locale=cast(Locale, user.preferred_locale),
+        settings=settings,
+    )
+    return TokenPairResponse(
+        access_token=pair.access_token,
+        refresh_token=pair.refresh_token,
+        expires_in=pair.expires_in,
+        user=TokenPairUser(
+            id=user.id,
+            email=user.email,
+            locale=cast(Locale, user.preferred_locale),
+            role=cast(Role, user.role),
+        ),
+    )
+
+
+class _LogoutResponse(BaseModel):
+    ok: bool = True
+
+
+@router.post("/logout", response_model=_LogoutResponse, summary="Invalidate refresh token")
+async def logout() -> _LogoutResponse:
+    """Stateless logout — client drops the tokens. Server-side revocation TBD."""
+    log.info("logout")
+    return _LogoutResponse()
 
 
 # ---------------------------------------------------------------------------
