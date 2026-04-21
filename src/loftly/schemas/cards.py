@@ -67,3 +67,49 @@ class CardList(BaseModel):
 
     data: list[Card]
     pagination: Pagination
+
+
+class TransferPartner(BaseModel):
+    """One `transfer_ratios` row projected for the compare widget."""
+
+    destination_code: str
+    destination_display_name_en: str
+    destination_display_name_th: str
+    ratio_source: float
+    ratio_destination: float
+    bonus_percentage: float
+
+
+class CardValuationSnapshot(BaseModel):
+    """Most-recent `point_valuations` row for the card's earn currency."""
+
+    thb_per_point: float
+    methodology: str
+    confidence: float
+    sample_size: int
+
+
+class CardComparison(BaseModel):
+    """Enriched card payload used by `/v1/cards/compare` — superset of `Card`.
+
+    Adds transfer partners, a THB-per-point valuation snapshot, and a Loftly
+    score (computed server-side from confidence + earn-rate + fee heuristics
+    until the dedicated scoring pipeline lands post-MVP).
+    """
+
+    card: Card
+    transfer_partners: list[TransferPartner] = Field(default_factory=list)
+    valuation: CardValuationSnapshot | None = None
+    loftly_score: float | None = None
+
+
+class CardComparisonList(BaseModel):
+    """Response envelope for `/v1/cards/compare`."""
+
+    data: list[CardComparison]
+
+
+class CardSimilarList(BaseModel):
+    """Response envelope for `/v1/cards/similar/{slug}`."""
+
+    data: list[Card]
