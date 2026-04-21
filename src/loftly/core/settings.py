@@ -90,6 +90,17 @@ class Settings(BaseSettings):
     #: future ops pings). Distinct from `resend_from_address` which is the
     #: outbound FROM for user-facing mail.
     founder_notify_email: str = Field(default="founder@loftly.co.th")
+    #: POST_V1 §2 kill-switch. `true` (default) → Haiku composes a personalized
+    #: top-3 recap; `false` → magic-link flow falls back to the v1 static
+    #: template. Required so ops can flip the path off without a redeploy when
+    #: Anthropic is down or the prompt regresses in prod. Fail-open to
+    #: personalized matches the product bet — we'd rather send a richer email
+    #: most of the time than protect against the degenerate case.
+    welcome_email_personalized: bool = Field(default=True)
+    #: Public base URL used to build the tracking-pixel URL embedded in
+    #: personalized welcome emails. Separate from ``resend_from_address`` so
+    #: staging/prod can use their own domains without touching the FROM.
+    api_public_base_url: str = Field(default="https://api.loftly.co.th")
 
     # --- OAuth providers (optional; stub mode when unset) ---
     loftly_oauth_google_client_id: str | None = Field(default=None)
