@@ -67,6 +67,7 @@ from loftly.db.models.affiliate import (  # noqa: E402
 )
 from loftly.db.models.article import Article  # noqa: E402
 from loftly.db.models.audit import AuditLog, SyncRun  # noqa: E402
+from loftly.db.models.author import Author  # noqa: E402
 from loftly.db.models.bank import Bank  # noqa: E402
 from loftly.db.models.card import Card  # noqa: E402
 from loftly.db.models.consent import UserConsent  # noqa: E402
@@ -87,6 +88,7 @@ __all__ = [
     "AffiliateLink",
     "Article",
     "AuditLog",
+    "Author",
     "Bank",
     "Base",
     "Card",
