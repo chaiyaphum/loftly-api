@@ -35,3 +35,7 @@ class User(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Stamped on each JWT issuance (magic-link consume + OAuth callback). Null
+    # for users created before migration 016 ran, and null between account row
+    # creation and first successful token issuance in the same request.
+    last_login_at: Mapped[datetime | None] = mapped_column(nullable=True)
