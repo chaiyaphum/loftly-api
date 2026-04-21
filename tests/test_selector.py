@@ -7,6 +7,7 @@ Exercises:
 - GET /v1/selector/{id} with valid token returns the stored envelope
 - GET with missing/invalid token → 401
 - GET with unknown session → 404
+- POST_V1 §3 — happy-path writes `selector:session:{id}:meta`
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from loftly.api.routes.selector import issue_session_token
 from loftly.core.settings import get_settings
 from loftly.db.engine import get_sessionmaker
 from loftly.db.models.selector_session import SelectorSession
+from loftly.selector.session_cache import read_session_meta
 
 
 def _base_payload() -> dict[str, object]:
@@ -127,3 +129,31 @@ async def test_selector_retrieve_404_for_unknown_session(
     resp = await seeded_client.get(f"/v1/selector/{fake_id}", params={"token": token})
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "selector_session_not_found"
+
+
+async def test_selector_happy_path_writes_session_meta(
+    seeded_client: AsyncClient,
+) -> None:
+    """POST_V1 §3 — `_compute_or_get_cached` must persist meta on every result.
+
+    With `goal.type=miles` + seed cards (scb-thai-airways earns ROP/airline),
+    the deterministic provider yields a non-empty stack with a `primary`
+    card, so session_cache.write_session_meta should fire. The written meta
+    carries the card's display_name (not slug), which is what the landing
+    hero needs.
+    """
+    resp = await seeded_client.post("/v1/selector", json=_base_payload())
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["stack"], "seed should yield a non-empty stack for miles+ROP"
+    session_id = body["session_id"]
+
+    meta = await read_session_meta(session_id)
+    assert meta is not None, f"expected session meta at selector:session:{session_id}:meta"
+    # Display name of the top-ranked seed card for miles+ROP.
+    assert meta.card_name == "SCB Thai Airways Royal Orchid Plus"
+    # card_id matches the primary stack item (UUID as string).
+    primary_id = next(it["card_id"] for it in body["stack"] if it["role"] == "primary")
+    assert meta.card_id == primary_id
+    assert meta.profile_hash  # non-empty; exact value depends on payload hash
+    assert meta.last_seen_at  # ISO-8601 string
