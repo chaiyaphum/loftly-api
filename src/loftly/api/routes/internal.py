@@ -7,6 +7,7 @@ already carries it.
 - `POST /v1/internal/sync/deal-harvester` — kick off a background sync.
 - `GET  /v1/internal/sync/deal-harvester/last` — peek latest SyncRun.
 - `POST /v1/internal/valuation/run` — scaffold stub kept for parity.
+- `POST /v1/internal/audit-retention/run` — PDPA retention sweep (weekly cron).
 """
 
 from __future__ import annotations
@@ -164,3 +165,26 @@ async def cache_warm(
     )
     latency_ms = (time.perf_counter() - start) * 1000.0
     return {"warmed": True, "latency_ms": round(latency_ms, 2)}
+
+
+@router.post(
+    "/audit-retention/run",
+    summary="Execute audit_log retention sweep (PDPA-aware, action_type classified)",
+)
+async def run_audit_retention(
+    _auth: None = Depends(require_internal_api_key),
+) -> dict[str, Any]:
+    """Delete expired `audit_log` rows per the two-bucket retention policy.
+
+    - `consent.*`, `account.delete.*`, `privacy.*`, `pdpa.*` → 7 years
+    - all other `action` values → 18 months
+
+    Driven weekly by the Cloudflare Worker cron (Mon 03:00 ICT / Sun 20:00 UTC).
+    The import of `loftly.jobs.audit_log_retention` is deferred to keep app
+    startup cheap and to avoid the import-cycle class of failures that caused
+    a prior revert of this endpoint.
+    """
+    from loftly.jobs.audit_log_retention import run_retention
+
+    result = await run_retention(dry_run=False)
+    return result.to_log_dict()
