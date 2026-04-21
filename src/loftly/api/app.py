@@ -1,0 +1,110 @@
+"""FastAPI application factory.
+
+Wires settings, logging, middleware, routers, and exception handlers.
+Matches the endpoint inventory in `../loftly/mvp/API_CONTRACT.md` and
+Pydantic schemas generated from `mvp/artifacts/openapi.yaml`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from loftly import __version__
+from loftly.api.errors import register_exception_handlers
+from loftly.api.routes import (
+    account,
+    admin,
+    affiliate,
+    articles,
+    auth,
+    cards,
+    consent,
+    health,
+    internal,
+    promos,
+    selector,
+    valuations,
+    webhooks,
+)
+from loftly.core.logging import configure_logging, get_logger
+from loftly.core.settings import get_settings
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
+    configure_logging(settings)
+    log = get_logger(__name__)
+    log.info("loftly_api_startup", env=settings.loftly_env, version=__version__)
+    try:
+        yield
+    finally:
+        log.info("loftly_api_shutdown")
+
+
+def create_app() -> FastAPI:
+    """Return a fully-wired FastAPI application.
+
+    Kept as a factory so tests can build isolated instances without leaking
+    settings or DB state across cases.
+    """
+    settings = get_settings()
+
+    app = FastAPI(
+        title="Loftly API",
+        description=(
+            "Phase 1 MVP backend for Loftly — Thai AI-native credit-card rewards "
+            "optimization. Source of truth for the contract is "
+            "`../loftly/mvp/artifacts/openapi.yaml`."
+        ),
+        version=__version__,
+        lifespan=lifespan,
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
+    )
+
+    # CORS — see API_CONTRACT.md §Security baseline.
+    allowed_origins = [
+        "https://loftly.co.th",
+        "https://www.loftly.co.th",
+        "https://staging.loftly.co.th",
+        "http://localhost:3000",
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Loftly-Signature"],
+    )
+
+    register_exception_handlers(app)
+
+    # Health probes live at the root, not under /v1 — matches openapi.yaml.
+    app.include_router(health.router)
+
+    # Versioned API surface.
+    app.include_router(auth.router)
+    app.include_router(consent.router)
+    app.include_router(account.router)
+    app.include_router(cards.router)
+    app.include_router(articles.router)
+    app.include_router(selector.router)
+    app.include_router(valuations.router)
+    app.include_router(promos.router)
+    app.include_router(affiliate.router)
+    app.include_router(admin.router)
+    app.include_router(internal.router)
+    app.include_router(webhooks.router)
+
+    # Bind settings onto state for debugging/introspection without re-reading env.
+    app.state.settings = settings
+    return app
+
+
+app = create_app()

@@ -1,0 +1,1118 @@
+openapi: 3.1.0
+info:
+  title: Loftly API — Phase 1 MVP
+  description: |
+    The loftly-api HTTP contract for Phase 1. See `/mvp/API_CONTRACT.md` for the
+    reader-friendly guide; this file is the source of truth for code generation
+    and runtime validation.
+
+    Base path: `/v1`. All timestamps are RFC 3339 with timezone. Monetary values
+    are in THB as `numeric` strings to avoid float precision loss.
+  version: 0.1.0
+  contact:
+    name: Loftly
+    url: https://loftly.co.th
+
+servers:
+  - url: https://api.loftly.co.th/v1
+    description: Production
+  - url: https://staging-api.loftly.co.th/v1
+    description: Staging
+  - url: http://localhost:8000/v1
+    description: Local dev
+
+tags:
+  - name: auth
+  - name: consent
+  - name: account
+  - name: cards
+  - name: articles
+  - name: selector
+  - name: valuations
+  - name: promos
+  - name: affiliate
+  - name: admin
+  - name: internal
+  - name: webhook
+  - name: health
+
+security:
+  - {}  # default: no auth; per-endpoint overrides below
+
+paths:
+
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness (DB + Redis + Anthropic reachability)
+      security: []
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: Not ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/oauth/callback:
+    post:
+      tags: [auth]
+      summary: Complete OAuth and mint JWT pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OAuthCallbackRequest' }
+      responses:
+        '200':
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+
+  /auth/magic-link/request:
+    post:
+      tags: [auth]
+      summary: Send magic link for email-only signup
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MagicLinkRequest' }
+      responses:
+        '202': { description: Accepted }
+
+  /auth/magic-link/consume:
+    post:
+      tags: [auth]
+      summary: Redeem magic link token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MagicLinkConsume' }
+      responses:
+        '200':
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotate access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: New access token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Invalidate refresh token
+      security: [{ userJWT: [] }]
+      responses:
+        '204': { description: Logged out }
+
+  /consent:
+    get:
+      tags: [consent]
+      summary: Current consent state (4 purposes)
+      security: [{ userJWT: [] }]
+      responses:
+        '200':
+          description: Consent snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsentState' }
+    post:
+      tags: [consent]
+      summary: Update consent (append-only)
+      security: [{ userJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConsentUpdate' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsentState' }
+
+  /account/data-export/request:
+    post:
+      tags: [account]
+      summary: Queue data export job
+      security: [{ userJWT: [] }]
+      responses:
+        '202':
+          description: Job queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobHandle' }
+
+  /account/data-export/{jobId}:
+    get:
+      tags: [account]
+      summary: Export job status
+      security: [{ userJWT: [] }]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportJob' }
+
+  /account/delete/request:
+    post:
+      tags: [account]
+      summary: Begin 14-day deletion grace period
+      security: [{ userJWT: [] }]
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteStatus' }
+
+  /account/delete/cancel:
+    post:
+      tags: [account]
+      summary: Cancel pending deletion (before grace ends)
+      security: [{ userJWT: [] }]
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteStatus' }
+
+  /cards:
+    get:
+      tags: [cards]
+      summary: List cards (public catalog)
+      security: []
+      parameters:
+        - name: issuer
+          in: query
+          schema: { type: string }
+        - name: network
+          in: query
+          schema: { type: string, enum: [Visa, Mastercard, Amex, JCB, UnionPay] }
+        - name: tier
+          in: query
+          schema: { type: string }
+        - name: best_for_tag
+          in: query
+          schema: { type: array, items: { type: string } }
+          style: form
+          explode: true
+        - name: max_annual_fee
+          in: query
+          schema: { type: number }
+        - name: earn_currency
+          in: query
+          schema: { type: string }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Card list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardList' }
+
+  /cards/{slug}:
+    get:
+      tags: [cards]
+      summary: Card detail by slug
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Card
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Card' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /articles/{slug}:
+    get:
+      tags: [articles]
+      summary: Article (review/guide) body
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Article
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Article' }
+
+  /selector:
+    post:
+      tags: [selector]
+      summary: Submit spend profile; receive ranked card stack
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SelectorInput' }
+      responses:
+        '200':
+          description: Result (initial JSON envelope; additional SSE frames stream rationale chunks)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SelectorResult' }
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream of rationale chunks then final `done` event
+        '422':
+          description: Invalid profile (category sum mismatch, goal mismatch, etc.)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Rate-limited
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: All LLM paths degraded (rule-based fallback served)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SelectorResult' }
+
+  /selector/{sessionId}:
+    get:
+      tags: [selector]
+      summary: Retrieve previously computed result
+      security: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+          description: Signed token (from magic link or initial response)
+      responses:
+        '200':
+          description: Cached result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SelectorResult' }
+
+  /valuations:
+    get:
+      tags: [valuations]
+      summary: All current valuations
+      security: []
+      responses:
+        '200':
+          description: Valuation list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Valuation' }
+
+  /valuations/{currencyCode}:
+    get:
+      tags: [valuations]
+      summary: Valuation + methodology for one currency
+      security: []
+      parameters:
+        - name: currencyCode
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Z_]+$' }
+      responses:
+        '200':
+          description: Valuation detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ValuationDetail' }
+
+  /promos:
+    get:
+      tags: [promos]
+      summary: Active promotions
+      security: []
+      parameters:
+        - name: bank
+          in: query
+          schema: { type: string }
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: card_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Promo list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PromoList' }
+
+  /affiliate/click/{cardId}:
+    post:
+      tags: [affiliate]
+      summary: Record click; redirect to partner URL
+      security: []
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: placement
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [review, selector_result, cards_index, promo]
+        - name: utm_campaign
+          in: query
+          schema: { type: string }
+      responses:
+        '302':
+          description: Redirect to partner
+          headers:
+            Location:
+              schema: { type: string, format: uri }
+            Set-Cookie:
+              schema: { type: string, description: first-party click_id cookie }
+
+  /webhooks/affiliate/{partnerId}:
+    post:
+      tags: [webhook]
+      summary: Partner conversion postback
+      security: [{ webhookHMAC: [] }]
+      parameters:
+        - name: partnerId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookConversion' }
+      responses:
+        '204': { description: Accepted }
+        '401':
+          description: Signature verification failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /admin/cards:
+    get:
+      tags: [admin]
+      summary: List cards (all states)
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: Card list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardList' }
+    post:
+      tags: [admin]
+      summary: Create card
+      security: [{ adminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CardUpsert' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Card' }
+
+  /admin/cards/{id}:
+    patch:
+      tags: [admin]
+      summary: Update card
+      security: [{ adminJWT: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CardUpsert' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Card' }
+
+  /admin/articles:
+    get:
+      tags: [admin]
+      summary: List articles (all states)
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: Article list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArticleList' }
+    post:
+      tags: [admin]
+      summary: Create article
+      security: [{ adminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArticleUpsert' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Article' }
+
+  /admin/articles/{id}:
+    patch:
+      tags: [admin]
+      summary: Update article (includes state transitions)
+      security: [{ adminJWT: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArticleUpsert' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Article' }
+
+  /admin/promos:
+    get:
+      tags: [admin]
+      summary: List promos
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: Promo list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PromoList' }
+    post:
+      tags: [admin]
+      summary: Create manual promo
+      security: [{ adminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoUpsert' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Promo' }
+
+  /admin/mapping-queue:
+    get:
+      tags: [admin]
+      summary: Unresolved promo → card mappings
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: Queue
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MappingQueue' }
+
+  /admin/mapping-queue/{promoId}/assign:
+    post:
+      tags: [admin]
+      summary: Bind promo to card(s)
+      security: [{ adminJWT: [] }]
+      parameters:
+        - name: promoId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                card_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+              required: [card_ids]
+      responses:
+        '204': { description: Mapped }
+
+  /admin/affiliate/stats:
+    get:
+      tags: [admin]
+      summary: 30-day affiliate funnel
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AffiliateStats' }
+
+  /admin/affiliate/export.csv:
+    get:
+      tags: [admin]
+      summary: CSV dump of last 30d clicks + conversions
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: CSV
+          content:
+            text/csv:
+              schema: { type: string }
+
+  /internal/sync/deal-harvester:
+    post:
+      tags: [internal]
+      summary: Trigger deal-harvester sync
+      security: [{ internalApiKey: [] }]
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobHandle' }
+
+  /internal/sync/deal-harvester/last:
+    get:
+      tags: [internal]
+      summary: Last sync run status
+      security: [{ internalApiKey: [] }]
+      responses:
+        '200':
+          description: Sync status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncRun' }
+
+  /internal/valuation/run:
+    post:
+      tags: [internal]
+      summary: Trigger weekly valuation job
+      security: [{ internalApiKey: [] }]
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobHandle' }
+
+components:
+
+  securitySchemes:
+    userJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    adminJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT with role=admin claim
+    internalApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    webhookHMAC:
+      type: apiKey
+      in: header
+      name: X-Loftly-Signature
+
+  schemas:
+
+    Health:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        checks:
+          type: object
+          additionalProperties: { type: string }
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message_en]
+          properties:
+            code: { type: string }
+            message_en: { type: string }
+            message_th: { type: string }
+            details: { type: object, additionalProperties: true }
+
+    Pagination:
+      type: object
+      properties:
+        cursor_next: { type: string, nullable: true }
+        has_more: { type: boolean }
+        total_estimate: { type: integer }
+
+    OAuthCallbackRequest:
+      type: object
+      required: [provider, code, redirect_uri]
+      properties:
+        provider: { type: string, enum: [google, apple, line] }
+        code: { type: string }
+        redirect_uri: { type: string, format: uri }
+
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, description: seconds }
+        user:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            email: { type: string, format: email }
+            locale: { type: string, enum: [th, en] }
+            role: { type: string, enum: [user, admin] }
+
+    MagicLinkRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+        session_id: { type: string, format: uuid, nullable: true }
+
+    MagicLinkConsume:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+
+    ConsentState:
+      type: object
+      properties:
+        policy_version: { type: string }
+        consents:
+          type: object
+          properties:
+            optimization: { type: boolean }
+            marketing: { type: boolean }
+            analytics: { type: boolean }
+            sharing: { type: boolean }
+
+    ConsentUpdate:
+      type: object
+      required: [purpose, granted, policy_version]
+      properties:
+        purpose: { type: string, enum: [optimization, marketing, analytics, sharing] }
+        granted: { type: boolean }
+        policy_version: { type: string }
+        source: { type: string, enum: [onboarding, account_settings, selector, admin] }
+
+    JobHandle:
+      type: object
+      properties:
+        job_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, running, done, failed] }
+
+    ExportJob:
+      allOf:
+        - $ref: '#/components/schemas/JobHandle'
+        - type: object
+          properties:
+            download_url: { type: string, format: uri, nullable: true }
+            expires_at: { type: string, format: date-time, nullable: true }
+
+    DeleteStatus:
+      type: object
+      properties:
+        status: { type: string, enum: [not_requested, pending, cancelled, completed] }
+        requested_at: { type: string, format: date-time, nullable: true }
+        grace_ends_at: { type: string, format: date-time, nullable: true }
+
+    Card:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        display_name: { type: string }
+        bank:
+          type: object
+          properties:
+            slug: { type: string }
+            display_name_en: { type: string }
+            display_name_th: { type: string }
+        tier: { type: string, nullable: true }
+        network: { type: string }
+        annual_fee_thb: { type: number, nullable: true }
+        annual_fee_waiver: { type: string, nullable: true }
+        min_income_thb: { type: number, nullable: true }
+        min_age: { type: integer, nullable: true }
+        earn_currency:
+          $ref: '#/components/schemas/Currency'
+        earn_rate_local:
+          type: object
+          additionalProperties: { type: number }
+        earn_rate_foreign:
+          type: object
+          additionalProperties: { type: number }
+          nullable: true
+        benefits:
+          type: object
+          additionalProperties: true
+        signup_bonus:
+          type: object
+          nullable: true
+          properties:
+            bonus_points: { type: integer }
+            spend_required: { type: number }
+            timeframe_days: { type: integer }
+        description_th: { type: string, nullable: true }
+        description_en: { type: string, nullable: true }
+        status: { type: string, enum: [active, inactive, archived] }
+
+    CardList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Card' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    CardUpsert:
+      type: object
+      description: Admin payload for create/update. Required fields depend on status transition.
+      additionalProperties: true
+
+    Article:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        card_id: { type: string, format: uuid, nullable: true }
+        article_type: { type: string, enum: [card_review, guide, news, comparison] }
+        title_th: { type: string }
+        title_en: { type: string, nullable: true }
+        summary_th: { type: string }
+        summary_en: { type: string, nullable: true }
+        body_th: { type: string }
+        body_en: { type: string, nullable: true }
+        best_for_tags:
+          type: array
+          items: { type: string }
+        state: { type: string, enum: [draft, review, published, archived] }
+        policy_version: { type: string }
+        published_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time }
+        seo_meta:
+          type: object
+          additionalProperties: true
+
+    ArticleList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Article' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    ArticleUpsert:
+      type: object
+      additionalProperties: true
+
+    Currency:
+      type: object
+      properties:
+        code: { type: string }
+        display_name_en: { type: string }
+        display_name_th: { type: string }
+        currency_type: { type: string, enum: [bank_proprietary, airline, hotel] }
+        issuing_entity: { type: string, nullable: true }
+
+    Valuation:
+      type: object
+      properties:
+        currency: { $ref: '#/components/schemas/Currency' }
+        thb_per_point: { type: number }
+        methodology: { type: string }
+        percentile: { type: integer }
+        sample_size: { type: integer }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        top_redemption_example: { type: string, nullable: true }
+        computed_at: { type: string, format: date-time }
+
+    ValuationDetail:
+      allOf:
+        - $ref: '#/components/schemas/Valuation'
+        - type: object
+          properties:
+            distribution_summary:
+              type: object
+              description: percentiles for public display
+              additionalProperties: { type: number }
+            history:
+              type: array
+              items:
+                type: object
+                properties:
+                  thb_per_point: { type: number }
+                  computed_at: { type: string, format: date-time }
+
+    Promo:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        bank_slug: { type: string }
+        external_source_id: { type: string, nullable: true }
+        source_url: { type: string, format: uri }
+        promo_type: { type: string, enum: [category_bonus, cashback, transfer_bonus, signup, statement_credit, dining_program] }
+        title_th: { type: string }
+        title_en: { type: string, nullable: true }
+        description_th: { type: string, nullable: true }
+        merchant_name: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        discount_type: { type: string, nullable: true }
+        discount_value: { type: string, nullable: true }
+        discount_amount: { type: number, nullable: true }
+        discount_unit: { type: string, nullable: true }
+        minimum_spend: { type: number, nullable: true }
+        valid_from: { type: string, format: date, nullable: true }
+        valid_until: { type: string, format: date, nullable: true }
+        card_ids:
+          type: array
+          items: { type: string, format: uuid }
+        active: { type: boolean }
+
+    PromoList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Promo' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    PromoUpsert:
+      type: object
+      additionalProperties: true
+
+    MappingQueueItem:
+      type: object
+      properties:
+        promo_id: { type: string, format: uuid }
+        title_th: { type: string }
+        bank_slug: { type: string }
+        card_types_raw:
+          type: array
+          items: { type: string }
+        suggested_card_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    MappingQueue:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/MappingQueueItem' }
+        total: { type: integer }
+
+    SelectorInput:
+      type: object
+      required: [monthly_spend_thb, spend_categories, goal, locale]
+      properties:
+        monthly_spend_thb:
+          type: integer
+          minimum: 5000
+          maximum: 2000000
+        spend_categories:
+          type: object
+          description: keys in {dining, online, travel, grocery, petrol, other}
+          additionalProperties: { type: integer }
+        current_cards:
+          type: array
+          items: { type: string, description: cards.slug }
+        goal:
+          type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [miles, cashback, benefits] }
+            currency_preference: { type: string, nullable: true }
+            horizon_months: { type: integer, nullable: true }
+            target_points: { type: integer, nullable: true }
+        locale: { type: string, enum: [th, en] }
+
+    SelectorResult:
+      type: object
+      properties:
+        session_id: { type: string, format: uuid }
+        stack:
+          type: array
+          items:
+            type: object
+            properties:
+              card_id: { type: string, format: uuid }
+              slug: { type: string }
+              role: { type: string, enum: [primary, secondary, tertiary] }
+              monthly_earning_points: { type: integer }
+              monthly_earning_thb_equivalent: { type: integer }
+              annual_fee_thb: { type: number, nullable: true }
+              reason_th: { type: string }
+              reason_en: { type: string, nullable: true }
+        total_monthly_earning_points: { type: integer }
+        total_monthly_earning_thb_equivalent: { type: integer }
+        months_to_goal: { type: integer, nullable: true }
+        with_signup_bonus_months: { type: integer, nullable: true }
+        valuation_confidence: { type: number }
+        rationale_th: { type: string }
+        rationale_en: { type: string, nullable: true }
+        warnings:
+          type: array
+          items: { type: string }
+        llm_model: { type: string }
+        fallback: { type: boolean }
+        partial_unlock:
+          type: boolean
+          description: true when anonymous user sees only primary
+
+    WebhookConversion:
+      type: object
+      required: [click_id, event, event_at]
+      properties:
+        click_id: { type: string, format: uuid }
+        partner_ref: { type: string }
+        event: { type: string, enum: [application_submitted, application_approved, application_rejected] }
+        card_slug: { type: string }
+        commission_thb: { type: number, nullable: true }
+        event_at: { type: string, format: date-time }
+        raw_metadata: { type: object, additionalProperties: true }
+
+    AffiliateStats:
+      type: object
+      properties:
+        period_days: { type: integer }
+        clicks: { type: integer }
+        conversions: { type: integer }
+        conversion_rate: { type: number }
+        commission_pending_thb: { type: number }
+        commission_confirmed_thb: { type: number }
+        commission_paid_thb: { type: number }
+        by_card:
+          type: array
+          items:
+            type: object
+            properties:
+              card_slug: { type: string }
+              clicks: { type: integer }
+              conversions: { type: integer }
+              commission_thb: { type: number }
+
+    SyncRun:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        source: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [success, partial, failed, running] }
+        upstream_count: { type: integer }
+        inserted_count: { type: integer }
+        updated_count: { type: integer }
+        deactivated_count: { type: integer }
+        mapping_queue_added: { type: integer }
+        error_message: { type: string, nullable: true }

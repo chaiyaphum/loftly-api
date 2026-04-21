@@ -1,0 +1,98 @@
+[project]
+name = "loftly-api"
+version = "0.1.0"
+description = "Loftly API — FastAPI backend for the Thai AI-native credit-card rewards optimization platform (Phase 1 MVP)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "Loftly" }]
+
+dependencies = [
+    "fastapi>=0.115,<0.116",
+    "uvicorn[standard]>=0.30,<0.31",
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.3,<3",
+    "sqlalchemy[asyncio]>=2.0.30,<2.1",
+    "asyncpg>=0.29,<0.31",
+    "alembic>=1.13,<2",
+    "structlog>=24.1,<25",
+    "httpx>=0.27,<0.29",
+    "python-jose[cryptography]>=3.3,<4",
+    "greenlet>=3.0,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6,<0.14",
+    "mypy>=1.10,<2",
+    "pytest>=8.2,<9",
+    "pytest-asyncio>=0.23,<0.27",
+    "aiosqlite>=0.20,<0.22",
+    "types-python-jose>=3.3,<4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/loftly"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6,<0.14",
+    "mypy>=1.10,<2",
+    "pytest>=8.2,<9",
+    "pytest-asyncio>=0.23,<0.27",
+    "aiosqlite>=0.20,<0.22",
+    "types-python-jose>=3.3,<4",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "N",   # pep8-naming
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501",  # line too long — formatter handles
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+"alembic/versions/*" = ["N806"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+packages = ["loftly"]
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["jose.*", "aiosqlite.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
