@@ -8,6 +8,7 @@ Used by `scripts/seed_catalog.py` and by the `seeded_db` pytest fixture.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,9 +16,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loftly.core.logging import get_logger
+from loftly.db.models.author import Author
 from loftly.db.models.bank import Bank
 from loftly.db.models.card import Card
 from loftly.db.models.loyalty_currency import LoyaltyCurrency
+
+# Stable UUID for the default organization byline. Pinned in migration 017
+# and re-inserted here so the test harness (which uses `create_all` instead
+# of Alembic) has the row available when exercising `/v1/authors/loftly`.
+LOFTLY_ORG_AUTHOR_ID = uuid.UUID("10ff1170-0000-4000-8000-000000000001")
 
 log = get_logger(__name__)
 
@@ -27,12 +34,14 @@ class SeedStats:
     banks_inserted: int
     currencies_inserted: int
     cards_inserted: int
+    authors_inserted: int = 0
 
     def as_dict(self) -> dict[str, int]:
         return {
             "banks": self.banks_inserted,
             "loyalty_currencies": self.currencies_inserted,
             "cards": self.cards_inserted,
+            "authors": self.authors_inserted,
         }
 
 
@@ -229,19 +238,47 @@ SAMPLE_CARDS: list[dict[str, Any]] = [
 
 
 async def seed_all(session: AsyncSession) -> SeedStats:
-    """Insert any missing banks/currencies/sample cards. Commit on success."""
+    """Insert any missing banks/currencies/sample cards/authors. Commit on success."""
     banks_ins = await _seed_banks(session)
     curr_ins = await _seed_currencies(session)
     cards_ins = await _seed_sample_cards(session)
+    authors_ins = await _seed_authors(session)
 
     await session.commit()
     stats = SeedStats(
         banks_inserted=banks_ins,
         currencies_inserted=curr_ins,
         cards_inserted=cards_ins,
+        authors_inserted=authors_ins,
     )
     log.info("catalog_seed_complete", **stats.as_dict())
     return stats
+
+
+async def _seed_authors(session: AsyncSession) -> int:
+    """Insert the default Loftly organization author if missing.
+
+    Migration 017 seeds the same row for production; this path covers the
+    test harness (which uses `create_all` instead of running migrations) so
+    `/v1/authors/loftly` works against the in-memory SQLite DB.
+    """
+    existing = (
+        await session.execute(
+            select(Author).where(Author.id == LOFTLY_ORG_AUTHOR_ID)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return 0
+    session.add(
+        Author(
+            id=LOFTLY_ORG_AUTHOR_ID,
+            slug="loftly",
+            display_name="Loftly",
+            display_name_en="Loftly",
+            role="organization",
+        )
+    )
+    return 1
 
 
 async def _seed_banks(session: AsyncSession) -> int:
