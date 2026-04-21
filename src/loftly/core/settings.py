@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     # --- Observability ---
     sentry_dsn: str | None = Field(default=None)
     langfuse_secret_key: str | None = Field(default=None)
+    #: Public key for the Langfuse project — required alongside the secret key
+    #: for the read-side metrics API used by the cost-anomaly check.
+    langfuse_public_key: str | None = Field(default=None)
     langfuse_host: str | None = Field(default=None)
     posthog_project_api_key: str | None = Field(default=None)
 
