@@ -38,6 +38,8 @@ from loftly.api.routes import (
 from loftly.core.cache import get_cache, set_cache
 from loftly.core.logging import configure_logging, get_logger
 from loftly.core.settings import get_settings
+from loftly.observability.langfuse import init_langfuse
+from loftly.observability.sentry import init_sentry
 
 
 @asynccontextmanager
@@ -45,15 +47,27 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings)
     log = get_logger(__name__)
+    # Observability first so any startup errors surface upstream.
+    init_sentry(settings)
+    init_langfuse(settings)
     # Prime the cache + provider singletons so request paths find them warm.
     cache = get_cache()
     provider = get_provider()
+    # Optional keys: warn loudly in non-test envs so ops notices before traffic.
+    if not settings.is_test:
+        if not settings.anthropic_api_key:
+            log.warning("anthropic_key_missing — selector will use deterministic fallback")
+        if not settings.resend_api_key:
+            log.warning("resend_key_missing — magic-link emails will log only")
     log.info(
         "loftly_api_startup",
         env=settings.loftly_env,
         version=__version__,
         llm_provider=provider.name,
         cache=type(cache).__name__,
+        sentry=bool(settings.sentry_dsn),
+        langfuse=bool(settings.langfuse_secret_key and settings.langfuse_host),
+        resend=bool(settings.resend_api_key),
     )
     try:
         yield
