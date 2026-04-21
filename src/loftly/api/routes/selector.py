@@ -7,6 +7,18 @@ Phase 2 (Week 9-12) adds:
 
 Phase 1 pieces kept: category-sum validation, 24h profile-hash cache,
 `selector_sessions` persistence, `partial_unlock=true` for anon callers.
+
+POST_V1 §3 (Tier A) adds:
+- `_compute_or_get_cached` writes `selector:session:{id}:meta` on every result
+  for returning-user landing + email composer (non-sensitive shape only).
+- `GET /v1/selector/recent` — public, IP-rate-limited (30/min), returns the
+  four-field meta snapshot for the landing hydration island. Uses `expired:true`
+  (never 404) so client fetch logs stay clean.
+- `POST /v1/selector/{id}/archive` — public, IP-rate-limited (10/min). Renames
+  `selector:session:{id}:meta` → `selector:session:archived:{id}:{ts}` preserving
+  the 24h TTL. The unchanged `GET /v1/selector/{id}` uses the DB, **not** Redis
+  meta, so a direct `/selector/results/[id]` link still re-hydrates for the full
+  24h after archive per the §3 acceptance criterion.
 """
 
 from __future__ import annotations
@@ -22,6 +34,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import StreamingResponse
 from jose import JWTError, jwt
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -33,6 +46,7 @@ from loftly.ai.providers.typhoon import (
     TyphoonUnavailableError,
 )
 from loftly.api.errors import LoftlyError
+from loftly.api.rate_limit import FixedWindowLimiter
 from loftly.core.cache import get_cache
 from loftly.core.feature_flags import FeatureFlags
 from loftly.core.logging import get_logger
@@ -47,6 +61,12 @@ from loftly.observability.posthog import hash_distinct_id
 from loftly.prompts.typhoon_nlu_spend import prompt_slug as nlu_prompt_slug
 from loftly.schemas.selector import FallbackReason, SelectorInput, SelectorResult
 from loftly.schemas.spend_nlu import SpendNLURequest, SpendNLUResponse
+from loftly.selector.session_cache import (
+    SessionMeta,
+    archive_session,
+    read_session_meta,
+    write_session_meta,
+)
 
 router = APIRouter(prefix="/v1/selector", tags=["selector"])
 log = get_logger(__name__)
@@ -71,6 +91,13 @@ _HAIKU_COST_CAP_THB = 0.50
 # FX used for the cost cap comparison. Directional — pulled from the same
 # quarterly review as valuation config.
 _USD_TO_THB = 35.0
+
+# POST_V1 §3 rate limiters — per-IP, in-memory (resets between workers but one
+# worker is our current deploy). 30/min for /recent (landing hydration, cheap),
+# 10/min for /archive (user-initiated "ทำ Selector ใหม่" CTA — rare hot-path).
+# Pattern mirrors `MAGIC_LINK_LIMITER` in `routes/auth.py`.
+RECENT_LIMITER = FixedWindowLimiter(max_calls=30, window_sec=60)
+ARCHIVE_LIMITER = FixedWindowLimiter(max_calls=10, window_sec=60)
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +523,36 @@ async def _stream_selector(result: SelectorResult) -> AsyncIterator[bytes]:
 # ---------------------------------------------------------------------------
 
 
+async def _persist_session_meta(
+    result: SelectorResult,
+    context: SelectorContext,
+    profile_hash: str,
+) -> None:
+    """POST_V1 §3 — write `selector:session:{id}:meta` after each result.
+
+    Idempotent; a cache-hit rewrite is cheap and refreshes `last_seen_at` so the
+    returning-user landing hero stays tied to "most recent visit" rather than
+    "first computation". Keys + shape owned by `selector.session_cache`.
+    """
+    primary = next((it for it in result.stack if it.role == "primary"), None)
+    if primary is None:
+        # No primary card (e.g. empty stack from a niche filter) — nothing to
+        # personalize with. Skip silently rather than write a half-populated
+        # meta that the landing page would have to special-case.
+        return
+    card = next((c for c in context.cards if c.slug == primary.slug), None)
+    card_name = card.display_name if card is not None else primary.slug
+    await write_session_meta(
+        session_id=result.session_id,
+        meta=SessionMeta(
+            card_name=card_name,
+            card_id=primary.card_id,
+            profile_hash=profile_hash,
+            last_seen_at=datetime.now(UTC).isoformat(),
+        ),
+    )
+
+
 async def _compute_or_get_cached(
     payload: SelectorInput,
     session: AsyncSession,
@@ -503,19 +560,26 @@ async def _compute_or_get_cached(
     """Core path used by both JSON and SSE responses. Handles cache + persist."""
     _validate_category_sum(payload)
     cache = get_cache()
-    key = f"selector:{_profile_hash(payload)}"
+    profile_hash = _profile_hash(payload)
+    key = f"selector:{profile_hash}"
 
     cached = await cache.get(key)
     if cached is not None:
         log.info("selector_cache_hit", profile_hash=key)
-        return SelectorResult.model_validate(cached)
+        result = SelectorResult.model_validate(cached)
+        # Refresh session-meta last_seen_at on every cache hit so the landing
+        # hero reflects "returned within 24h" cleanly. Context load is cheap
+        # (active cards only) and off the critical write path.
+        context = await _load_context(session)
+        await _persist_session_meta(result, context, profile_hash)
+        return result
 
     context = await _load_context(session)
     raw_result = await _run_with_fallback(payload, context)
 
     row = SelectorSession(
         user_id=None,
-        profile_hash=_profile_hash(payload),
+        profile_hash=profile_hash,
         input=payload.model_dump(mode="json"),
         output=raw_result.model_dump(mode="json"),
         provider=raw_result.llm_model,
@@ -526,6 +590,7 @@ async def _compute_or_get_cached(
 
     result = raw_result.model_copy(update={"session_id": str(row.id), "partial_unlock": True})
     await cache.set(key, result.model_dump(mode="json"), _CACHE_TTL_SECONDS)
+    await _persist_session_meta(result, context, profile_hash)
     log.info(
         "selector_computed",
         session_id=str(row.id),
@@ -671,6 +736,155 @@ async def parse_nlu(
         model=provider.model,
         duration_ms=duration_ms,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST_V1 §3 — returning-user landing endpoints.
+#
+# Both routes are public (the session_id in hand IS the capability). They
+# share the IP-based FixedWindowLimiter pattern from `routes/auth.py`.
+# Declared before `GET /{session_id}` so the literal `/recent` path wins
+# route matching; FastAPI would otherwise try to parse "recent" as a UUID
+# and 422 before reaching the handler.
+# ---------------------------------------------------------------------------
+
+
+class RecentSessionResponse(BaseModel):
+    """Shape returned by `GET /v1/selector/recent`.
+
+    `expired=true` signals either "no session_id provided" or "meta gone / archived".
+    Using a 200 with `expired:true` (rather than 404) keeps the frontend's fetch
+    logs clean — a 404 would fire error-reporting hooks in dev/prod.
+    """
+
+    card_name: str | None = None
+    card_id: str | None = None
+    hours_since_last_session: float | None = None
+    expired: bool
+
+
+class ArchiveResponse(BaseModel):
+    """Shape returned by `POST /v1/selector/{session_id}/archive`.
+
+    `archived=false` means there was nothing to archive (already archived,
+    expired, or never existed). Idempotent on the caller's side.
+    """
+
+    archived: bool
+
+
+def _expired_recent() -> RecentSessionResponse:
+    """Canonical empty response for "no session / expired / archived"."""
+    return RecentSessionResponse(
+        card_name=None,
+        card_id=None,
+        hours_since_last_session=None,
+        expired=True,
+    )
+
+
+def _hours_since(iso_ts: str) -> float | None:
+    """Convert an ISO-8601 `last_seen_at` into hours elapsed.
+
+    Returns None on unparseable input rather than raising — the landing hero
+    gracefully degrades to hiding the "X hours ago" copy.
+    """
+    try:
+        parsed = datetime.fromisoformat(iso_ts)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        # Stored without tzinfo (shouldn't happen — session_cache writes UTC
+        # ISO strings — but be defensive).
+        parsed = parsed.replace(tzinfo=UTC)
+    delta = datetime.now(UTC) - parsed
+    return round(delta.total_seconds() / 3600, 2)
+
+
+@router.get(
+    "/recent",
+    response_model=RecentSessionResponse,
+    summary="Non-sensitive meta for returning-user landing hydration",
+)
+async def get_recent_session(
+    request: Request,
+    session_id: str | None = Query(default=None, description="Client's stored session UUID"),
+) -> RecentSessionResponse:
+    """Public — IP rate-limited (30/min). Returns the four-field meta snapshot.
+
+    Contract for the landing island (`POST_V1 §3`):
+    - No `session_id`: `{expired:true, ...null}` — fresh visitor or cookie gone
+    - Valid UUID + meta present: four-field populated shape, `expired:false`
+    - Valid UUID + meta absent (expired or archived): `{expired:true, ...null}`
+    - Malformed UUID: 400 (frontend bug — we want to see it)
+    - Over quota: 429 per `API_CONTRACT.md §Rate limits`
+    """
+    ip = request.client.host if request.client else "unknown"
+    if not RECENT_LIMITER.allow(ip):
+        raise LoftlyError(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            code="rate_limited",
+            message_en="Too many /recent requests — slow down.",
+            message_th="เรียกข้อมูลถี่เกินไป กรุณาลองใหม่ภายหลัง",
+        )
+
+    if session_id is None or session_id == "":
+        return _expired_recent()
+
+    # Validate UUID shape before hitting Redis — a malformed cookie is a
+    # frontend bug we want to catch, not silently swallow as "expired".
+    try:
+        parsed = uuid.UUID(session_id)
+    except (ValueError, AttributeError) as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="invalid_session_id",
+            message_en="session_id must be a valid UUID.",
+            message_th="session_id ไม่ถูกต้อง",
+        ) from exc
+
+    meta = await read_session_meta(str(parsed))
+    if meta is None:
+        return _expired_recent()
+
+    return RecentSessionResponse(
+        card_name=meta.card_name,
+        card_id=meta.card_id,
+        hours_since_last_session=_hours_since(meta.last_seen_at),
+        expired=False,
+    )
+
+
+@router.post(
+    "/{session_id}/archive",
+    response_model=ArchiveResponse,
+    summary="Archive a prior session (ทำ Selector ใหม่ CTA)",
+)
+async def archive_selector_session(
+    session_id: uuid.UUID,
+    request: Request,
+) -> ArchiveResponse:
+    """Public — IP rate-limited (10/min). Idempotent.
+
+    Renames `selector:session:{id}:meta` → `selector:session:archived:{id}:{ts}`
+    preserving the 24h TTL via the `archive_session` wrapper from PR-1. The
+    direct `GET /v1/selector/{id}?token=...` path still reads from Postgres
+    (`selector_sessions` table), so a user's deep-link to `/selector/results/[id]`
+    continues to work for the full 24h after archive — the rename only hides
+    the session from the returning-user landing hero.
+    """
+    ip = request.client.host if request.client else "unknown"
+    if not ARCHIVE_LIMITER.allow(ip):
+        raise LoftlyError(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            code="rate_limited",
+            message_en="Too many archive requests — slow down.",
+            message_th="เรียกคำสั่งถี่เกินไป กรุณาลองใหม่ภายหลัง",
+        )
+
+    archived = await archive_session(str(session_id))
+    log.info("selector_session_archived", session_id=str(session_id), archived=archived)
+    return ArchiveResponse(archived=archived)
 
 
 @router.get(
