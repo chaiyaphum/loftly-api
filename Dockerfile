@@ -25,10 +25,13 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
-# Copy project and install
+# Copy project and install. pyproject.toml declares `readme = "README.md"`, so
+# hatchling insists on it during the editable-install step even though we ship
+# no docs in the image.
 COPY src/ ./src/
 COPY alembic.ini ./alembic.ini
 COPY alembic/ ./alembic/
+COPY README.md ./README.md
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
