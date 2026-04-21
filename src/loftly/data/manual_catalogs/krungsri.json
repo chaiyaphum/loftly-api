@@ -1,0 +1,91 @@
+{
+  "bank": "krungsri",
+  "source": "manual_catalog",
+  "notes": "Krungsri (Bank of Ayudhya) promos — founder-curated from krungsri.com. TBD: verify each entry against the live bank promo page before enabling scheduled ingest.",
+  "promos": [
+    {
+      "title": "Krungsri Signature — dining 15% cashback",
+      "bank": "krungsri",
+      "card_types": ["Krungsri Signature"],
+      "category": "dining",
+      "start_date": "2026-04-21",
+      "end_date": "2026-07-20",
+      "discount_pct": 15,
+      "min_spend_thb": 2000,
+      "cashback_thb": null,
+      "cap_thb": 1000,
+      "source_url": "https://www.krungsri.com/th/personal/credit-cards/promotions/dining",
+      "notes": "TBD: verify against bank promo page"
+    },
+    {
+      "title": "Krungsri Platinum — travel 5% cashback",
+      "bank": "krungsri",
+      "card_types": ["Krungsri Platinum"],
+      "category": "travel",
+      "start_date": "2026-04-21",
+      "end_date": "2026-07-20",
+      "discount_pct": 5,
+      "min_spend_thb": 5000,
+      "cashback_thb": null,
+      "cap_thb": 500,
+      "source_url": "https://www.krungsri.com/th/personal/credit-cards/promotions/travel",
+      "notes": "TBD: verify against bank promo page"
+    },
+    {
+      "title": "Krungsri Exclusive Signature — shopping 10% back",
+      "bank": "krungsri",
+      "card_types": ["Krungsri Exclusive Signature"],
+      "category": "shopping",
+      "start_date": "2026-04-21",
+      "end_date": "2026-07-20",
+      "discount_pct": 10,
+      "min_spend_thb": 2000,
+      "cashback_thb": null,
+      "cap_thb": 800,
+      "source_url": "https://www.krungsri.com/th/personal/credit-cards/promotions/shopping",
+      "notes": "TBD: verify against bank promo page"
+    },
+    {
+      "title": "Krungsri Lady Titanium — online 5% cashback",
+      "bank": "krungsri",
+      "card_types": ["Krungsri Lady Titanium"],
+      "category": "online",
+      "start_date": "2026-04-21",
+      "end_date": "2026-07-20",
+      "discount_pct": 5,
+      "min_spend_thb": 1000,
+      "cashback_thb": null,
+      "cap_thb": 300,
+      "source_url": "https://www.krungsri.com/th/personal/credit-cards/promotions/online",
+      "notes": "TBD: verify against bank promo page"
+    },
+    {
+      "title": "Krungsri Signature — petrol 10% back",
+      "bank": "krungsri",
+      "card_types": ["Krungsri Signature"],
+      "category": "petrol",
+      "start_date": "2026-04-21",
+      "end_date": "2026-07-20",
+      "discount_pct": 10,
+      "min_spend_thb": 1000,
+      "cashback_thb": null,
+      "cap_thb": 200,
+      "source_url": "https://www.krungsri.com/th/personal/credit-cards/promotions/petrol",
+      "notes": "TBD: verify against bank promo page"
+    },
+    {
+      "title": "Krungsri Platinum — grocery 5% cashback",
+      "bank": "krungsri",
+      "card_types": ["Krungsri Platinum"],
+      "category": "grocery",
+      "start_date": "2026-04-21",
+      "end_date": "2026-07-20",
+      "discount_pct": 5,
+      "min_spend_thb": 2000,
+      "cashback_thb": null,
+      "cap_thb": 400,
+      "source_url": "https://www.krungsri.com/th/personal/credit-cards/promotions/grocery",
+      "notes": "TBD: verify against bank promo page"
+    }
+  ]
+}

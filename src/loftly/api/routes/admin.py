@@ -1883,3 +1883,149 @@ async def audit_retention_preview(
 
     result = await run_retention(dry_run=True)
     return result.to_log_dict()
+
+
+# ---------------------------------------------------------------------------
+# Manual-catalog ingest — W18 gap coverage for UOB/Krungsri where deal-
+# harvester doesn't reach. Fixture-backed ingest + ad-hoc CSV upload.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/manual-catalog/{bank_slug}/ingest",
+    summary="Run manual-catalog JSON-fixture ingest for a bank",
+)
+async def manual_catalog_ingest(
+    bank_slug: str,
+    payload: dict[str, Any] = Body(default_factory=dict),
+    admin_id: uuid.UUID = Depends(get_current_admin_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Kick off the fixture-backed ingest for `bank_slug`.
+
+    Body: `{"dry_run": bool}` (default `false`). Returns counts envelope
+    (inserted / updated / archived / unchanged) without forcing the caller
+    to parse streaming logs.
+    """
+    from loftly.jobs.manual_catalog_ingest import run_ingest
+
+    dry_run = bool(payload.get("dry_run", False))
+    try:
+        result = await run_ingest(bank_slug, dry_run=dry_run)
+    except FileNotFoundError as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="fixture_not_found",
+            message_en=f"No manual-catalog fixture for {bank_slug!r}.",
+            message_th="ไม่พบไฟล์โปรโมชั่นสำหรับธนาคารนี้",
+            details={"bank_slug": bank_slug},
+        ) from exc
+    except ValueError as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="fixture_invalid",
+            message_en=str(exc),
+            message_th="ไฟล์โปรโมชั่นไม่ถูกต้อง",
+        ) from exc
+
+    await log_action(
+        session,
+        actor_id=admin_id,
+        action="manual_catalog.ingested",
+        subject_type="bank",
+        subject_id=None,
+        metadata={
+            "bank_slug": bank_slug,
+            "dry_run": dry_run,
+            "inserted": result.inserted,
+            "updated": result.updated,
+            "archived": result.archived,
+            "unchanged": result.unchanged,
+        },
+    )
+    await session.commit()
+    return result.model_dump()
+
+
+@router.post(
+    "/manual-catalog/{bank_slug}/upload",
+    summary="Upload CSV of manual promos for a bank and run ingest",
+)
+async def manual_catalog_upload(
+    bank_slug: str,
+    request: Request,
+    dry_run: bool = Query(default=False),
+    admin_id: uuid.UUID = Depends(get_current_admin_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Accept a CSV body + run `run_ingest` with the parsed rows.
+
+    Content-Type must be `text/csv` (or `application/csv`). CSV must include
+    the columns listed in `REQUIRED_CSV_COLUMNS`. Max `MAX_CSV_ROWS` rows per
+    upload — beyond that, split the file and upload again.
+    """
+    from loftly.jobs.manual_catalog_ingest import (
+        MAX_CSV_ROWS,
+        parse_csv,
+        run_ingest,
+    )
+
+    content_type = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if content_type not in {"text/csv", "application/csv", "text/plain"}:
+        raise LoftlyError(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            code="unsupported_content_type",
+            message_en="CSV upload requires Content-Type: text/csv.",
+            message_th="กรุณาอัปโหลดไฟล์ CSV",
+        )
+
+    raw = await request.body()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="csv_not_utf8",
+            message_en="CSV must be UTF-8 encoded.",
+            message_th="ไฟล์ CSV ต้องเป็นรหัส UTF-8",
+        ) from exc
+
+    try:
+        rows = parse_csv(text)
+    except ValueError as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="csv_invalid",
+            message_en=str(exc),
+            message_th="ไฟล์ CSV ไม่ถูกต้อง",
+            details={"max_rows": MAX_CSV_ROWS},
+        ) from exc
+
+    try:
+        result = await run_ingest(bank_slug, dry_run=dry_run, promos=rows)
+    except ValueError as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="ingest_failed",
+            message_en=str(exc),
+            message_th="นำเข้าข้อมูลไม่สำเร็จ",
+        ) from exc
+
+    await log_action(
+        session,
+        actor_id=admin_id,
+        action="manual_catalog.uploaded",
+        subject_type="bank",
+        subject_id=None,
+        metadata={
+            "bank_slug": bank_slug,
+            "dry_run": dry_run,
+            "row_count": len(rows),
+            "inserted": result.inserted,
+            "updated": result.updated,
+            "archived": result.archived,
+            "unchanged": result.unchanged,
+        },
+    )
+    await session.commit()
+    return result.model_dump()
