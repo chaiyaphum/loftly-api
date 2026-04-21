@@ -36,6 +36,14 @@ dev = [
     "pytest-asyncio>=0.23,<0.27",
     "aiosqlite>=0.20,<0.22",
     "types-python-jose>=3.3,<4",
+    "moto[s3]>=5.0,<6",
+]
+# Disaster-recovery tooling — only needed on the box that runs
+# `scripts.dr.*`. Kept out of the main dependencies so the API container
+# stays lean. Install with `uv sync --extra dr`.
+dr = [
+    "boto3>=1.35,<2",
+    "cryptography>=43,<46",
 ]
 
 [build-system]
@@ -56,6 +64,9 @@ dev = [
     "pytest-httpx>=0.35.0",
     "respx>=0.23.1",
     "redis>=7.4.0",
+    "moto[s3]>=5.0,<6",
+    "boto3>=1.35,<2",
+    "cryptography>=43,<46",
 ]
 
 [tool.ruff]
@@ -119,7 +130,7 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
