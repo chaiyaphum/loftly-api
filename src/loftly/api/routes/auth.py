@@ -230,6 +230,9 @@ async def magic_link_consume(
     else:
         user = existing
 
+    # Stamp last_login_at — consumed in `GET /v1/me` for the settings page.
+    user.last_login_at = datetime.now(UTC)
+
     # Bind selector_sessions row if the token carries a session_id.
     session_id_claim = claims.get("session_id")
     if session_id_claim:
@@ -345,6 +348,9 @@ async def oauth_callback(
     else:
         user = existing
 
+    # Stamp last_login_at — consumed in `GET /v1/me` for the settings page.
+    user.last_login_at = datetime.now(UTC)
+
     # Bind any dangling selector_session.
     if payload.session_id is not None:
         selector_row = (
@@ -435,6 +441,11 @@ async def refresh(
             message_en="User not found or deleted.",
             message_th="ไม่พบบัญชี",
         )
+
+    # Refresh is a successful login surface too — keep last_login_at current
+    # so long-lived sessions still show a plausible value in /v1/me.
+    user.last_login_at = datetime.now(UTC)
+    await session.commit()
 
     pair = issue_token_pair(
         user_id=user.id,
