@@ -28,6 +28,7 @@ from loftly.core.settings import Settings, get_settings
 from loftly.db.audit import log_action
 from loftly.db.engine import get_session
 from loftly.db.models.affiliate import AffiliateClick, AffiliateConversion
+from loftly.observability.prometheus import affiliate_commission_observer
 
 router = APIRouter(prefix="/v1/webhooks", tags=["webhook"])
 
@@ -188,6 +189,12 @@ async def affiliate_postback(
         _ = payload.get("event_at")  # validated above
         session.add(row)
         await session.commit()
+
+        # Prometheus: increment cumulative-revenue counter on a *confirmed*
+        # conversion only. Pending/rejected postbacks don't move the revenue
+        # line because they can flip later — the counter has to be monotonic.
+        if status_value == "confirmed" and commission is not None:
+            affiliate_commission_observer(partner_id=partner_id, thb=commission)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

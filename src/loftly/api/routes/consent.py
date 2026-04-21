@@ -21,6 +21,7 @@ from loftly.api.auth import get_current_user_id
 from loftly.api.errors import LoftlyError
 from loftly.db.engine import get_session
 from loftly.db.models.consent import UserConsent
+from loftly.observability.prometheus import consent_observer
 from loftly.schemas.consent import ConsentFlags, ConsentState, ConsentUpdate
 
 router = APIRouter(prefix="/v1/consent", tags=["consent"])
@@ -96,6 +97,13 @@ async def update_consent(
     )
     session.add(row)
     await session.commit()
+
+    # Metrics — counter per grant/withdraw event, labelled by purpose. Kept
+    # after commit so failed writes don't inflate the counter.
+    consent_observer(
+        purpose=payload.purpose,
+        action="granted" if payload.granted else "withdrawn",
+    )
 
     flags, policy_version = await _latest_state(session, user_id)
     return ConsentState(policy_version=policy_version, consents=flags)

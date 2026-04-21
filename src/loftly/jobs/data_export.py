@@ -32,6 +32,7 @@ from loftly.db.models.job import Job
 from loftly.db.models.selector_session import SelectorSession
 from loftly.db.models.user import User
 from loftly.db.models.user_card import UserCard
+from loftly.observability.prometheus import dsar_observer
 
 log = get_logger(__name__)
 
@@ -165,13 +166,26 @@ async def run_export(job_id: uuid.UUID) -> None:
         token = sign_download_token(job_id, expires_at=expires_at, secret=settings.jwt_signing_key)
         download_url = f"/v1/account/data-export/{job_id}/download?token={token}"
 
+        finished_at = datetime.now(UTC)
         async with sessionmaker() as session:
             job = (await session.execute(select(Job).where(Job.id == job_id))).scalars().one()
             job.status = "done"
             job.result_url = download_url
             job.expires_at = expires_at
-            job.finished_at = datetime.now(UTC)
+            job.finished_at = finished_at
+            created_at = job.created_at
             await session.commit()
+
+        # DSAR metric close — use wall-clock days between request + finish.
+        if created_at is not None:
+            created_aware = (
+                created_at if created_at.tzinfo is not None else created_at.replace(tzinfo=UTC)
+            )
+            days = max(0.0, (finished_at - created_aware).total_seconds() / 86_400.0)
+            dsar_observer("export", "closed", resolution_days=days)
+        else:
+            dsar_observer("export", "closed")
+
         log.info(
             "data_export_complete",
             job_id=str(job_id),
