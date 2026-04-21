@@ -37,6 +37,7 @@ from loftly.api.routes import (
     promos,
     selector,
     valuations,
+    waitlist,
     webhooks,
 )
 from loftly.core.cache import get_cache, set_cache
@@ -189,6 +190,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_flags.router)
     app.include_router(admin_metrics.router)
     app.include_router(internal.router)
+    app.include_router(waitlist.router)
     app.include_router(webhooks.router)
 
     # Bind settings onto state for debugging/introspection without re-reading env.

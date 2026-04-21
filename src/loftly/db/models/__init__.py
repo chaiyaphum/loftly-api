@@ -78,6 +78,7 @@ from loftly.db.models.selector_session import SelectorSession  # noqa: E402
 from loftly.db.models.transfer_ratio import TransferRatio  # noqa: E402
 from loftly.db.models.user import User  # noqa: E402
 from loftly.db.models.user_card import UserCard  # noqa: E402
+from loftly.db.models.waitlist import Waitlist  # noqa: E402
 
 __all__ = [
     "GUID",
@@ -99,5 +100,6 @@ __all__ = [
     "User",
     "UserCard",
     "UserConsent",
+    "Waitlist",
     "promo_card_map",
 ]
