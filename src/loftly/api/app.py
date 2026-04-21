@@ -15,6 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from loftly import __version__
 from loftly.api.errors import register_exception_handlers
+from loftly.api.middleware.logging import (
+    RequestLoggingMiddleware,
+    TraceHeaderMiddleware,
+)
 from loftly.api.routes import (
     account,
     admin,
@@ -81,7 +85,13 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Loftly-Signature"],
+        expose_headers=["X-Trace-Id"],
     )
+
+    # Observability: log every request + propagate trace_id. Order matters:
+    # TraceHeader runs LAST (injects header on outbound) -> added FIRST.
+    app.add_middleware(TraceHeaderMiddleware)
+    app.add_middleware(RequestLoggingMiddleware)
 
     register_exception_handlers(app)
 
