@@ -59,4 +59,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status == 200 else 1)"
 
-CMD ["uvicorn", "loftly.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# --timeout-graceful-shutdown=25 — on SIGTERM uvicorn stops accepting new
+# conns, drains in-flight requests for up to 25s, then force-closes. DO App
+# Platform's default grace window is 30s; the 5s buffer leaves room for the
+# lifespan teardown (DB dispose, Sentry/Langfuse flush — see DRILL-003).
+CMD ["uvicorn", "loftly.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "25"]

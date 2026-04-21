@@ -8,6 +8,7 @@ Pydantic schemas generated from `mvp/artifacts/openapi.yaml`.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
@@ -42,6 +43,7 @@ from loftly.api.routes import (
     waitlist,
     webhooks,
 )
+from loftly.api.routes.health import set_shutting_down
 from loftly.core.cache import get_cache, set_cache
 from loftly.core.logging import configure_logging, get_logger
 from loftly.core.settings import get_settings
@@ -116,14 +118,65 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # Clear singletons on shutdown so reload cycles get fresh instances.
+        # ---- Graceful shutdown — see DRILL-003. ------------------------
+        # Order matters:
+        #   1. Flip `_shutting_down` so `/readyz` returns 503 *before* we
+        #      start tearing anything down. DO App Platform's load
+        #      balancer watches `/readyz` and pulls this pod out of
+        #      rotation once it flips; that's what drains in-flight
+        #      traffic before we close the DB pool.
+        #   2. Cancel the background pool-snapshot task and await it so
+        #      pytest doesn't emit "coroutine was never awaited" warnings
+        #      and Sentry doesn't see a CancelledError at exit.
+        #   3. Dispose the SQLAlchemy engine — returns pool connections
+        #      to Postgres cleanly instead of letting TCP RST close them.
+        #   4. Flush Sentry + Langfuse so any buffered events make it out
+        #      before the process exits (DO's default grace window is
+        #      30s, uvicorn gets 25, leaving ~5s for these flushes).
+        #   5. Clear singletons last so reload cycles get fresh state.
+        shutdown_start = time.perf_counter()
+        set_shutting_down(True)
+        log.info("shutdown_started")
+
         if pool_task is not None:
             pool_task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await pool_task
+
+        # Close DB engine so pooled connections are returned cleanly.
+        with suppress(Exception):
+            await get_engine().dispose()
+
+        # Flush Sentry if it was initialised. `sentry_sdk.flush` is
+        # sync+blocking but bounded — we cap it at 2s.
+        with suppress(Exception):
+            import sentry_sdk
+
+            sentry_sdk.flush(timeout=2.0)
+
+        # Flush Langfuse if wired. The client exposes `.flush()` in 2.x+
+        # and `.shutdown()` for hard-stop; either is fine at exit.
+        with suppress(Exception):
+            from loftly.observability import langfuse as _lf
+
+            lf_client = getattr(_lf, "_LANGFUSE_CLIENT", None)
+            if lf_client is not None:
+                flush_fn = getattr(lf_client, "flush", None)
+                if callable(flush_fn):
+                    flush_fn()
+                shutdown_fn = getattr(lf_client, "shutdown", None)
+                if callable(shutdown_fn):
+                    shutdown_fn()
+
+        # Clear singletons so reload cycles pick up fresh instances.
         set_cache(None)
         set_provider(None)
-        log.info("loftly_api_shutdown")
+
+        duration_ms = round((time.perf_counter() - shutdown_start) * 1000.0, 2)
+        log.info("shutdown_complete", duration_ms=duration_ms)
+        # Reset the flag on clean exit so tests that reuse the module see
+        # a fresh state; prod processes exit immediately after this.
+        set_shutting_down(False)
 
 
 def create_app() -> FastAPI:
