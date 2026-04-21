@@ -44,17 +44,17 @@ jobs:
         run: uv run pytest -q
 
   selector_eval:
+    name: Selector golden-set recall (≥ LOFTLY_EVAL_MIN_RECALL)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Only run when AI wiring or eval fixtures change. Still a merge-blocker.
-    if: |
-      contains(github.event.pull_request.changed_files, 'src/loftly/ai/') ||
-      contains(github.event.pull_request.changed_files, 'src/loftly/data/selector_eval/') ||
-      github.event_name == 'push'
+    # Always runs on PRs + push to main. The prior path-gated `if:` was a no-op
+    # (contains(...) on github.event.pull_request.changed_files — an integer,
+    # not a list — always returned false), so it was silently skipping.
     env:
       LOFTLY_ENV: test
       DATABASE_URL: sqlite+aiosqlite:///:memory:
       JWT_SIGNING_KEY: ci-secret
+      LOFTLY_EVAL_MIN_RECALL: "0.75"
     steps:
       - uses: actions/checkout@v4
 
@@ -70,4 +70,12 @@ jobs:
         run: uv sync --frozen
 
       - name: Run Selector golden-set eval (deterministic)
-        run: uv run python -m scripts.run_selector_eval --provider deterministic --verbose
+        run: uv run python -m scripts.run_selector_eval --provider deterministic --verbose --json > eval-result.json
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selector-eval-report
+          path: eval-result.json
+          retention-days: 14
