@@ -82,7 +82,11 @@ def upgrade() -> None:
         ),
         sa.Column("deleted_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.CheckConstraint(
-            "oauth_provider IN ('google','apple','line')",
+            # NB: 'email_magic' is formally added by migration 010 on Postgres;
+            # we include it here so SQLite (which can't easily ALTER CHECK
+            # constraints) passes both the system-user seed in 012 and the
+            # magic-link code path out-of-the-box.
+            "oauth_provider IN ('google','apple','line','email_magic')",
             name="users_oauth_provider_check",
         ),
         sa.CheckConstraint(

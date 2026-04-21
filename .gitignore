@@ -60,3 +60,7 @@ coverage.xml
 *.db
 *.sqlite
 *.sqlite3
+
+# Data-export tmp bundles (Phase 1 storage; moves to R2 in prod)
+/tmp/loftly_exports/
+
