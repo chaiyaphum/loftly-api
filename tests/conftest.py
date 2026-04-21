@@ -32,6 +32,10 @@ from loftly.db.seed import seed_all
 # it without violating the users_id FK.
 TEST_USER_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
 TEST_ADMIN_ID = uuid.UUID("00000000-0000-4000-8000-000000000009")
+# Matches `SYSTEM_USER_ID` in `routes/webhooks.py` + migration 012. Inserted
+# by the `seeded_db` fixture so audit rows on webhook rejection don't trip the
+# FK constraint under SQLite tests.
+SYSTEM_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 @pytest.fixture(autouse=True)
@@ -43,10 +47,12 @@ def _reset_settings_cache() -> None:
 
     # Clear in-memory rate-limiter between tests (it's module-global).
     from loftly.api.rate_limit import AFFILIATE_CLICK_LIMITER
+    from loftly.api.routes.account import DATA_EXPORT_LIMITER
     from loftly.api.routes.auth import MAGIC_LINK_LIMITER
 
     AFFILIATE_CLICK_LIMITER.reset()
     MAGIC_LINK_LIMITER.reset()
+    DATA_EXPORT_LIMITER.reset()
 
     # Cache + provider singletons are process-global; reset so each test
     # picks up fresh state from settings.
@@ -100,6 +106,15 @@ async def seeded_db(app: object) -> AsyncIterator[object]:
                 role="admin",
             )
         )
+        session.add(
+            User(
+                id=SYSTEM_USER_ID,
+                email="system@loftly.co.th",
+                oauth_provider="email_magic",
+                oauth_subject="__system__",
+                role="admin",
+            )
+        )
         await session.commit()
         await seed_all(session)
     yield app
@@ -145,4 +160,4 @@ async def user_headers(seeded_client: AsyncClient) -> dict[str, str]:
 
 
 # Re-export for test modules that want direct session access.
-__all__ = ["TEST_ADMIN_ID", "TEST_USER_ID", "get_session"]
+__all__ = ["SYSTEM_USER_ID", "TEST_ADMIN_ID", "TEST_USER_ID", "get_session"]
