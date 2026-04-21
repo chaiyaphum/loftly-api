@@ -1,95 +1,96 @@
 """Cards catalog — `GET /v1/cards`, `GET /v1/cards/{slug}`.
 
-Phase 1 scaffold returns a 2-item baked-in fixture so tests pass without DB
-seeding. Real DB-backed listing arrives in Week 3 once migrations 002-003 run
-and card CMS seeding is live (SCHEMA.md §Seed data requirements).
+DB-backed in Week 2. Seed via `uv run python -m scripts.seed_catalog`.
+Contract lives in `../loftly/mvp/artifacts/openapi.yaml`.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+import base64
+import uuid
+from typing import Any
+
+from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from loftly.api.errors import LoftlyError
-from loftly.schemas.cards import BankMini, Card, CardList, Currency
+from loftly.db.engine import get_session
+from loftly.db.models.card import Card as CardModel
+from loftly.schemas.cards import BankMini, Card, CardList, Currency, SignupBonus
 from loftly.schemas.common import Pagination
 
 router = APIRouter(prefix="/v1/cards", tags=["cards"])
 
 
-# --- Fixture ---------------------------------------------------------------
+# --- Cursor helpers --------------------------------------------------------
 
-_K_POINT = Currency(
-    code="K_POINT",
-    display_name_en="K Point",
-    display_name_th="เค พอยท์",
-    currency_type="bank_proprietary",
-    issuing_entity="Kasikornbank",
-)
 
-_KTC_FOREVER = Currency(
-    code="KTC_FOREVER",
-    display_name_en="KTC Forever",
-    display_name_th="KTC Forever",
-    currency_type="bank_proprietary",
-    issuing_entity="KTC",
-)
+def _encode_cursor(card_id: uuid.UUID) -> str:
+    return base64.urlsafe_b64encode(str(card_id).encode("ascii")).decode("ascii")
 
-_FIXTURE: list[Card] = [
-    Card(
-        id="11111111-1111-4111-8111-111111111111",
-        slug="kbank-wisdom",
-        display_name="KBank WISDOM",
+
+def _decode_cursor(cursor: str) -> uuid.UUID:
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("ascii")
+        return uuid.UUID(raw)
+    except (ValueError, TypeError) as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="invalid_cursor",
+            message_en="Cursor is malformed.",
+            message_th="ตัวระบุตำแหน่งไม่ถูกต้อง",
+            details={"cursor": cursor},
+        ) from exc
+
+
+# --- Projection ------------------------------------------------------------
+
+
+def _to_schema(row: CardModel) -> Card:
+    """Map an ORM Card (with eager-loaded bank + currency) to the public schema."""
+    signup_bonus = None
+    if row.signup_bonus:
+        sb: dict[str, Any] = row.signup_bonus
+        signup_bonus = SignupBonus(
+            bonus_points=int(sb.get("bonus_points", 0)),
+            spend_required=float(sb.get("spend_required", 0)),
+            timeframe_days=int(sb.get("timeframe_days", 0)),
+        )
+    return Card(
+        id=str(row.id),
+        slug=row.slug,
+        display_name=row.display_name,
         bank=BankMini(
-            slug="kbank",
-            display_name_en="Kasikornbank",
-            display_name_th="กสิกรไทย",
+            slug=row.bank.slug,
+            display_name_en=row.bank.display_name_en,
+            display_name_th=row.bank.display_name_th,
         ),
-        tier="Signature",
-        network="Visa",
-        annual_fee_thb=5000.00,
-        annual_fee_waiver="ฟรีปีแรก",
-        min_income_thb=80000.00,
-        min_age=20,
-        earn_currency=_K_POINT,
-        earn_rate_local={"dining": 2.0, "online": 1.5, "default": 1.0},
-        earn_rate_foreign={"default": 2.5},
-        benefits={"lounge": {"provider": "LoungeKey", "visits_per_year": 8}},
-        signup_bonus=None,
-        description_th="บัตรหลักสำหรับสะสม K Point — คุ้มกับการใช้จ่ายต่างประเทศ",
-        description_en="Primary K Point earner — strong on foreign-currency spend",
-        status="active",
-    ),
-    Card(
-        id="22222222-2222-4222-8222-222222222222",
-        slug="ktc-x-infinite",
-        display_name="KTC X Infinite",
-        bank=BankMini(
-            slug="ktc",
-            display_name_en="KTC",
-            display_name_th="เคทีซี",
+        tier=row.tier,
+        network=row.network,
+        annual_fee_thb=float(row.annual_fee_thb) if row.annual_fee_thb is not None else None,
+        annual_fee_waiver=row.annual_fee_waiver,
+        min_income_thb=(float(row.min_income_thb) if row.min_income_thb is not None else None),
+        min_age=row.min_age,
+        earn_currency=Currency(
+            code=row.earn_currency.code,
+            display_name_en=row.earn_currency.display_name_en,
+            display_name_th=row.earn_currency.display_name_th,
+            currency_type=row.earn_currency.currency_type,
+            issuing_entity=row.earn_currency.issuing_entity,
         ),
-        tier="Infinite",
-        network="Visa",
-        annual_fee_thb=5350.00,
-        annual_fee_waiver=None,
-        min_income_thb=100000.00,
-        min_age=20,
-        earn_currency=_KTC_FOREVER,
-        earn_rate_local={"travel": 3.0, "dining": 2.0, "default": 1.0},
-        earn_rate_foreign={"default": 2.0},
-        benefits={"lounge": {"provider": "Priority Pass", "visits_per_year": 12}},
-        signup_bonus={
-            "bonus_points": 15000,
-            "spend_required": 100000.0,
-            "timeframe_days": 60,
-        },
-        description_th="บัตรท่องเที่ยวและโรงแรม — คะแนนแลกไมล์ได้หลายสายการบิน",
-        description_en="Travel-focused with flexible KTC Forever transfers",
-        status="active",
-    ),
-]
-
-_BY_SLUG = {c.slug: c for c in _FIXTURE}
+        earn_rate_local={k: float(v) for k, v in (row.earn_rate_local or {}).items()},
+        earn_rate_foreign=(
+            {k: float(v) for k, v in row.earn_rate_foreign.items()}
+            if row.earn_rate_foreign
+            else None
+        ),
+        benefits=row.benefits or {},
+        signup_bonus=signup_bonus,
+        description_th=row.description_th,
+        description_en=row.description_en,
+        status=row.status,
+    )
 
 
 # --- Routes ----------------------------------------------------------------
@@ -108,27 +109,52 @@ async def list_cards(
     earn_currency: str | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),
 ) -> CardList:
-    """Phase 1: returns the in-memory fixture. Filters are honored when present."""
-    items = list(_FIXTURE)
-    if issuer:
-        items = [c for c in items if c.bank.slug == issuer]
-    if network:
-        items = [c for c in items if c.network == network]
-    if tier:
-        items = [c for c in items if c.tier == tier]
-    if max_annual_fee is not None:
-        items = [c for c in items if (c.annual_fee_thb or 0) <= max_annual_fee]
-    if earn_currency:
-        items = [c for c in items if c.earn_currency.code == earn_currency]
+    """Return active cards with optional filters and cursor pagination.
 
-    items = items[:limit]
+    Cursor is a base64(uuid) of the last-seen card id. Stable because results
+    are ordered by id ascending.
+    """
+    from loftly.db.models.bank import Bank as BankModel
+    from loftly.db.models.loyalty_currency import LoyaltyCurrency
+
+    stmt = select(CardModel).where(CardModel.status == "active")
+
+    if issuer:
+        stmt = stmt.join(BankModel, CardModel.bank_id == BankModel.id).where(
+            BankModel.slug == issuer
+        )
+    if network:
+        stmt = stmt.where(CardModel.network == network)
+    if tier:
+        stmt = stmt.where(CardModel.tier == tier)
+    if max_annual_fee is not None:
+        stmt = stmt.where(CardModel.annual_fee_thb <= max_annual_fee)
+    if earn_currency:
+        stmt = stmt.join(LoyaltyCurrency, CardModel.earn_currency_id == LoyaltyCurrency.id).where(
+            LoyaltyCurrency.code == earn_currency
+        )
+
+    if cursor:
+        after_id = _decode_cursor(cursor)
+        stmt = stmt.where(CardModel.id > after_id)
+
+    # +1 sentinel to know if there's another page
+    stmt = stmt.order_by(CardModel.id.asc()).limit(limit + 1)
+
+    result = await session.execute(stmt)
+    rows = list(result.scalars().unique().all())
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    cursor_next = _encode_cursor(page[-1].id) if has_more and page else None
+
     return CardList(
-        data=items,
+        data=[_to_schema(r) for r in page],
         pagination=Pagination(
-            cursor_next=None,
-            has_more=False,
-            total_estimate=len(items),
+            cursor_next=cursor_next,
+            has_more=has_more,
+            total_estimate=None,
         ),
     )
 
@@ -141,23 +167,22 @@ async def list_cards(
         status.HTTP_404_NOT_FOUND: {"description": "Not found"},
     },
 )
-async def get_card(slug: str) -> Card:
-    try:
-        return _BY_SLUG[slug]
-    except KeyError as exc:
+async def get_card(
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+) -> Card:
+    stmt = select(CardModel).where(CardModel.slug == slug)
+    result = await session.execute(stmt)
+    row = result.scalars().unique().one_or_none()
+    if row is None:
         raise LoftlyError(
             status_code=status.HTTP_404_NOT_FOUND,
             code="card_not_found",
             message_en=f"No card with slug {slug!r}.",
             message_th=f"ไม่พบบัตรรหัส {slug}",
             details={"slug": slug},
-        ) from exc
+        )
+    return _to_schema(row)
 
 
-# Admin / back-office pieces live in admin.py. This router intentionally exposes
-# only the public read endpoints.
 __all__ = ["router"]
-
-
-def _not_implemented() -> HTTPException:
-    return HTTPException(status.HTTP_501_NOT_IMPLEMENTED, detail="not implemented")
