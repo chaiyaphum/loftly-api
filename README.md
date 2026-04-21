@@ -63,6 +63,24 @@ uv run alembic upgrade head
 uv run alembic revision -m "add something" --autogenerate
 ```
 
+Migrations 001–008 chain linearly and are portable (Postgres prod via asyncpg,
+SQLite via aiosqlite for tests). Postgres-only DDL (pgcrypto extension,
+`set_updated_at` trigger, GIN indexes, partial UNIQUE) is gated on
+`op.get_bind().dialect.name == "postgresql"` via `loftly.db.migration_helpers`.
+
+## Seeding
+
+After `alembic upgrade head`, populate the catalog (banks, loyalty currencies,
+a pair of sample cards) with the idempotent seed runner:
+
+```bash
+uv run python -m scripts.seed_catalog
+```
+
+Re-running is safe — rows are matched by unique columns and skipped if already
+present. The pytest `seeded_db` fixture calls the same seed path, so tests
+never rely on hand-crafted fixtures in route code.
+
 ## Deploy
 
 Fly.io target — see `fly.toml` and `../loftly/mvp/DEPLOYMENT.md`.
