@@ -25,10 +25,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from loftly.api.errors import LoftlyError
 from loftly.core.settings import Settings, get_settings
+from loftly.db.audit import log_action
 from loftly.db.engine import get_session
 from loftly.db.models.affiliate import AffiliateClick, AffiliateConversion
 
 router = APIRouter(prefix="/v1/webhooks", tags=["webhook"])
+
+# Seeded by migration 012. Stable UUID so audit rows remain attributable.
+SYSTEM_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+
+async def _audit_signature_rejection(
+    session: AsyncSession, *, partner_id: str, reason: str
+) -> None:
+    """Log every rejected webhook under the system user so forensics survive."""
+    await log_action(
+        session,
+        actor_id=SYSTEM_USER_ID,
+        action="webhook.signature_rejected",
+        subject_type="affiliate_partner",
+        subject_id=None,
+        metadata={"partner_id": partner_id, "reason": reason},
+    )
+    await session.commit()
 
 
 _CONVERSION_TYPE_TO_STATUS = {
@@ -62,6 +81,8 @@ async def affiliate_postback(
 
     # Unknown partner OR missing signature OR bad signature => 401 identically.
     if secret is None or not x_loftly_signature:
+        reason = "unknown_partner" if secret is None else "missing_signature"
+        await _audit_signature_rejection(session, partner_id=partner_id, reason=reason)
         raise LoftlyError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="webhook_signature_invalid",
@@ -71,6 +92,9 @@ async def affiliate_postback(
 
     expected = _expected_signature(secret, body)
     if not hmac.compare_digest(expected, x_loftly_signature):
+        await _audit_signature_rejection(
+            session, partner_id=partner_id, reason="signature_mismatch"
+        )
         raise LoftlyError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             code="webhook_signature_invalid",
