@@ -1,0 +1,17 @@
+{
+  "currency_code": "BONVOY",
+  "samples": [
+    { "origin": "BKK", "destination": "hotel1", "cabin": "standard", "cash_thb": 4500, "taxes_thb": 350 },
+    { "origin": "BKK", "destination": "hotel1", "cabin": "premium", "cash_thb": 12000, "taxes_thb": 900 },
+    { "origin": "BKK", "destination": "hotel2", "cabin": "standard", "cash_thb": 6500, "taxes_thb": 500 },
+    { "origin": "TYO", "destination": "hotel1", "cabin": "standard", "cash_thb": 10500, "taxes_thb": 800 },
+    { "origin": "TYO", "destination": "hotel1", "cabin": "premium", "cash_thb": 22000, "taxes_thb": 1500 },
+    { "origin": "TYO", "destination": "hotel2", "cabin": "standard", "cash_thb": 15500, "taxes_thb": 1100 },
+    { "origin": "SIN", "destination": "hotel1", "cabin": "standard", "cash_thb": 13500, "taxes_thb": 950 },
+    { "origin": "HKG", "destination": "hotel1", "cabin": "standard", "cash_thb": 16000, "taxes_thb": 1100 },
+    { "origin": "LON", "destination": "hotel1", "cabin": "standard", "cash_thb": 18000, "taxes_thb": 1300 },
+    { "origin": "LON", "destination": "hotel2", "cabin": "premium", "cash_thb": 32000, "taxes_thb": 2200 },
+    { "origin": "NYC", "destination": "hotel1", "cabin": "premium", "cash_thb": 38000, "taxes_thb": 2600 },
+    { "origin": "MLE", "destination": "hotel1", "cabin": "premium", "cash_thb": 52000, "taxes_thb": 3200 }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "currency_code": "KTC_FOREVER",
+  "samples": [
+    { "origin": "BKK", "destination": "NRT", "cabin": "economy", "cash_thb": 28000, "taxes_thb": 1500 },
+    { "origin": "BKK", "destination": "HKG", "cabin": "economy", "cash_thb": 21000, "taxes_thb": 1200 },
+    { "origin": "BKK", "destination": "SIN", "cabin": "economy", "cash_thb": 14000, "taxes_thb": 800 },
+    { "origin": "BKK", "destination": "KUL", "cabin": "economy", "cash_thb": 18000, "taxes_thb": 800 },
+    { "origin": "BKK", "destination": "ICN", "cabin": "economy", "cash_thb": 46000, "taxes_thb": 1500 },
+    { "origin": "BKK", "destination": "TPE", "cabin": "business", "cash_thb": 61000, "taxes_thb": 2000 }
+  ]
+}

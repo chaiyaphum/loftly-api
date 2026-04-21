@@ -1,0 +1,29 @@
+{
+  "currency_code": "K_POINT",
+  "issuing_entity": "Kasikornbank",
+  "notes": "Bank-proprietary. Values derived via best transfer ratio to airlines (1 K Point ≈ 0.5 airline mile).",
+  "region_map": {
+    "BKK-NRT": "asia_pac",
+    "BKK-HKG": "asia_pac",
+    "BKK-SIN": "sea",
+    "BKK-KUL": "sea",
+    "BKK-LHR": "europe",
+    "BKK-FRA": "europe",
+    "BKK-TPE": "asia_pac",
+    "BKK-SYD": "other",
+    "BKK-ICN": "asia_pac",
+    "BKK-LAX": "americas"
+  },
+  "routes": [
+    { "origin": "BKK", "destination": "NRT", "cabin": "economy", "points": 60000 },
+    { "origin": "BKK", "destination": "NRT", "cabin": "business", "points": 154000 },
+    { "origin": "BKK", "destination": "HKG", "cabin": "economy", "points": 44000 },
+    { "origin": "BKK", "destination": "SIN", "cabin": "economy", "points": 30000 },
+    { "origin": "BKK", "destination": "SIN", "cabin": "business", "points": 50000 },
+    { "origin": "BKK", "destination": "KUL", "cabin": "economy", "points": 30000 },
+    { "origin": "BKK", "destination": "LHR", "cabin": "business", "points": 220000 },
+    { "origin": "BKK", "destination": "FRA", "cabin": "business", "points": 200000 },
+    { "origin": "BKK", "destination": "TPE", "cabin": "economy", "points": 36000 },
+    { "origin": "BKK", "destination": "ICN", "cabin": "economy", "points": 70000 }
+  ]
+}

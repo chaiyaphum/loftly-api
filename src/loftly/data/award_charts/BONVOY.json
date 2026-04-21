@@ -1,0 +1,30 @@
+{
+  "currency_code": "BONVOY",
+  "issuing_entity": "Marriott",
+  "region_map": {
+    "BKK-hotel1": "sea",
+    "BKK-hotel2": "sea",
+    "TYO-hotel1": "asia_pac",
+    "TYO-hotel2": "asia_pac",
+    "SIN-hotel1": "sea",
+    "HKG-hotel1": "asia_pac",
+    "LON-hotel1": "europe",
+    "LON-hotel2": "europe",
+    "NYC-hotel1": "americas",
+    "MLE-hotel1": "asia_pac"
+  },
+  "routes": [
+    { "origin": "BKK", "destination": "hotel1", "cabin": "standard", "points": 17500 },
+    { "origin": "BKK", "destination": "hotel1", "cabin": "premium", "points": 40000 },
+    { "origin": "BKK", "destination": "hotel2", "cabin": "standard", "points": 25000 },
+    { "origin": "TYO", "destination": "hotel1", "cabin": "standard", "points": 35000 },
+    { "origin": "TYO", "destination": "hotel1", "cabin": "premium", "points": 70000 },
+    { "origin": "TYO", "destination": "hotel2", "cabin": "standard", "points": 50000 },
+    { "origin": "SIN", "destination": "hotel1", "cabin": "standard", "points": 40000 },
+    { "origin": "HKG", "destination": "hotel1", "cabin": "standard", "points": 50000 },
+    { "origin": "LON", "destination": "hotel1", "cabin": "standard", "points": 55000 },
+    { "origin": "LON", "destination": "hotel2", "cabin": "premium", "points": 85000 },
+    { "origin": "NYC", "destination": "hotel1", "cabin": "premium", "points": 100000 },
+    { "origin": "MLE", "destination": "hotel1", "cabin": "premium", "points": 120000 }
+  ]
+}

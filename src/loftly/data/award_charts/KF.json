@@ -1,0 +1,33 @@
+{
+  "currency_code": "KF",
+  "issuing_entity": "Singapore Airlines",
+  "region_map": {
+    "SIN-BKK": "sea",
+    "SIN-KUL": "sea",
+    "SIN-HKG": "asia_pac",
+    "SIN-NRT": "asia_pac",
+    "SIN-ICN": "asia_pac",
+    "SIN-TPE": "asia_pac",
+    "SIN-SYD": "other",
+    "SIN-LHR": "europe",
+    "SIN-CDG": "europe",
+    "SIN-FRA": "europe",
+    "SIN-JFK": "americas",
+    "SIN-LAX": "americas"
+  },
+  "routes": [
+    { "origin": "SIN", "destination": "BKK", "cabin": "economy", "points": 12500 },
+    { "origin": "SIN", "destination": "BKK", "cabin": "business", "points": 25000 },
+    { "origin": "SIN", "destination": "KUL", "cabin": "economy", "points": 9000 },
+    { "origin": "SIN", "destination": "HKG", "cabin": "economy", "points": 23000 },
+    { "origin": "SIN", "destination": "HKG", "cabin": "business", "points": 46500 },
+    { "origin": "SIN", "destination": "NRT", "cabin": "economy", "points": 38500 },
+    { "origin": "SIN", "destination": "NRT", "cabin": "business", "points": 92000 },
+    { "origin": "SIN", "destination": "ICN", "cabin": "business", "points": 82500 },
+    { "origin": "SIN", "destination": "TPE", "cabin": "business", "points": 49500 },
+    { "origin": "SIN", "destination": "SYD", "cabin": "business", "points": 86000 },
+    { "origin": "SIN", "destination": "LHR", "cabin": "business", "points": 107000 },
+    { "origin": "SIN", "destination": "FRA", "cabin": "business", "points": 99000 },
+    { "origin": "SIN", "destination": "LAX", "cabin": "business", "points": 130500 }
+  ]
+}

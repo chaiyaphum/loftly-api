@@ -1,0 +1,35 @@
+{
+  "currency_code": "ROP",
+  "issuing_entity": "Thai Airways",
+  "region_map": {
+    "BKK-NRT": "asia_pac",
+    "BKK-HND": "asia_pac",
+    "BKK-ICN": "asia_pac",
+    "BKK-TPE": "asia_pac",
+    "BKK-HKG": "asia_pac",
+    "BKK-SIN": "sea",
+    "BKK-KUL": "sea",
+    "BKK-SGN": "sea",
+    "BKK-LHR": "europe",
+    "BKK-FRA": "europe",
+    "BKK-CDG": "europe",
+    "BKK-SYD": "other",
+    "BKK-LAX": "americas"
+  },
+  "routes": [
+    { "origin": "BKK", "destination": "NRT", "cabin": "economy", "points": 30000 },
+    { "origin": "BKK", "destination": "NRT", "cabin": "business", "points": 77000 },
+    { "origin": "BKK", "destination": "ICN", "cabin": "economy", "points": 35000 },
+    { "origin": "BKK", "destination": "ICN", "cabin": "business", "points": 85000 },
+    { "origin": "BKK", "destination": "HKG", "cabin": "economy", "points": 22000 },
+    { "origin": "BKK", "destination": "HKG", "cabin": "business", "points": 46000 },
+    { "origin": "BKK", "destination": "TPE", "cabin": "business", "points": 42000 },
+    { "origin": "BKK", "destination": "SIN", "cabin": "economy", "points": 15000 },
+    { "origin": "BKK", "destination": "SIN", "cabin": "business", "points": 25000 },
+    { "origin": "BKK", "destination": "KUL", "cabin": "economy", "points": 15000 },
+    { "origin": "BKK", "destination": "LHR", "cabin": "business", "points": 110000 },
+    { "origin": "BKK", "destination": "FRA", "cabin": "first", "points": 150000 },
+    { "origin": "BKK", "destination": "SYD", "cabin": "business", "points": 85000 },
+    { "origin": "BKK", "destination": "LAX", "cabin": "business", "points": 140000 }
+  ]
+}

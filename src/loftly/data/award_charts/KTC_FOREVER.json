@@ -1,0 +1,21 @@
+{
+  "currency_code": "KTC_FOREVER",
+  "issuing_entity": "KTC",
+  "notes": "Bank-proprietary; cashback-heavy currency. Small sample set.",
+  "region_map": {
+    "BKK-NRT": "asia_pac",
+    "BKK-HKG": "asia_pac",
+    "BKK-SIN": "sea",
+    "BKK-KUL": "sea",
+    "BKK-ICN": "asia_pac",
+    "BKK-TPE": "asia_pac"
+  },
+  "routes": [
+    { "origin": "BKK", "destination": "NRT", "cabin": "economy", "points": 100000 },
+    { "origin": "BKK", "destination": "HKG", "cabin": "economy", "points": 80000 },
+    { "origin": "BKK", "destination": "SIN", "cabin": "economy", "points": 55000 },
+    { "origin": "BKK", "destination": "KUL", "cabin": "economy", "points": 55000 },
+    { "origin": "BKK", "destination": "ICN", "cabin": "economy", "points": 120000 },
+    { "origin": "BKK", "destination": "TPE", "cabin": "business", "points": 160000 }
+  ]
+}

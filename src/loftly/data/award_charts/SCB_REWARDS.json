@@ -1,0 +1,21 @@
+{
+  "currency_code": "SCB_REWARDS",
+  "issuing_entity": "SCB",
+  "notes": "Bank-proprietary; cashback-heavy. Small sample set.",
+  "region_map": {
+    "BKK-NRT": "asia_pac",
+    "BKK-SIN": "sea",
+    "BKK-HKG": "asia_pac",
+    "BKK-TPE": "asia_pac",
+    "BKK-ICN": "asia_pac",
+    "BKK-LHR": "europe"
+  },
+  "routes": [
+    { "origin": "BKK", "destination": "NRT", "cabin": "economy", "points": 90000 },
+    { "origin": "BKK", "destination": "SIN", "cabin": "economy", "points": 45000 },
+    { "origin": "BKK", "destination": "HKG", "cabin": "economy", "points": 65000 },
+    { "origin": "BKK", "destination": "TPE", "cabin": "business", "points": 130000 },
+    { "origin": "BKK", "destination": "ICN", "cabin": "economy", "points": 105000 },
+    { "origin": "BKK", "destination": "LHR", "cabin": "business", "points": 290000 }
+  ]
+}

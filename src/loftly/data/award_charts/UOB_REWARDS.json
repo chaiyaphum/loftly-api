@@ -1,0 +1,21 @@
+{
+  "currency_code": "UOB_REWARDS",
+  "issuing_entity": "UOB",
+  "notes": "Bank-proprietary; limited published samples — Phase 1 confidence target 0.2–0.4.",
+  "region_map": {
+    "BKK-NRT": "asia_pac",
+    "BKK-SIN": "sea",
+    "BKK-HKG": "asia_pac",
+    "BKK-LHR": "europe",
+    "BKK-TPE": "asia_pac",
+    "BKK-ICN": "asia_pac"
+  },
+  "routes": [
+    { "origin": "BKK", "destination": "NRT", "cabin": "economy", "points": 80000 },
+    { "origin": "BKK", "destination": "NRT", "cabin": "business", "points": 190000 },
+    { "origin": "BKK", "destination": "SIN", "cabin": "economy", "points": 35000 },
+    { "origin": "BKK", "destination": "HKG", "cabin": "business", "points": 110000 },
+    { "origin": "BKK", "destination": "LHR", "cabin": "business", "points": 260000 },
+    { "origin": "BKK", "destination": "TPE", "cabin": "business", "points": 100000 }
+  ]
+}

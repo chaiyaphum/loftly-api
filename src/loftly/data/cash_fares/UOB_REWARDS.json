@@ -1,0 +1,11 @@
+{
+  "currency_code": "UOB_REWARDS",
+  "samples": [
+    { "origin": "BKK", "destination": "NRT", "cabin": "economy", "cash_thb": 28000, "taxes_thb": 1500 },
+    { "origin": "BKK", "destination": "NRT", "cabin": "business", "cash_thb": 122000, "taxes_thb": 5000 },
+    { "origin": "BKK", "destination": "SIN", "cabin": "economy", "cash_thb": 14000, "taxes_thb": 800 },
+    { "origin": "BKK", "destination": "HKG", "cabin": "business", "cash_thb": 71000, "taxes_thb": 2500 },
+    { "origin": "BKK", "destination": "LHR", "cabin": "business", "cash_thb": 170000, "taxes_thb": 10000 },
+    { "origin": "BKK", "destination": "TPE", "cabin": "business", "cash_thb": 61000, "taxes_thb": 2000 }
+  ]
+}

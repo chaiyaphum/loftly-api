@@ -1,0 +1,33 @@
+{
+  "currency_code": "AM",
+  "issuing_entity": "Cathay Pacific",
+  "region_map": {
+    "HKG-BKK": "sea",
+    "HKG-SIN": "sea",
+    "HKG-KUL": "sea",
+    "HKG-NRT": "asia_pac",
+    "HKG-ICN": "asia_pac",
+    "HKG-TPE": "asia_pac",
+    "HKG-SYD": "other",
+    "HKG-LHR": "europe",
+    "HKG-CDG": "europe",
+    "HKG-FRA": "europe",
+    "HKG-LAX": "americas",
+    "HKG-JFK": "americas"
+  },
+  "routes": [
+    { "origin": "HKG", "destination": "BKK", "cabin": "economy", "points": 15000 },
+    { "origin": "HKG", "destination": "BKK", "cabin": "business", "points": 30000 },
+    { "origin": "HKG", "destination": "SIN", "cabin": "economy", "points": 17000 },
+    { "origin": "HKG", "destination": "SIN", "cabin": "business", "points": 34000 },
+    { "origin": "HKG", "destination": "NRT", "cabin": "economy", "points": 22000 },
+    { "origin": "HKG", "destination": "NRT", "cabin": "business", "points": 45000 },
+    { "origin": "HKG", "destination": "ICN", "cabin": "business", "points": 45000 },
+    { "origin": "HKG", "destination": "TPE", "cabin": "economy", "points": 12000 },
+    { "origin": "HKG", "destination": "TPE", "cabin": "business", "points": 24000 },
+    { "origin": "HKG", "destination": "SYD", "cabin": "business", "points": 80000 },
+    { "origin": "HKG", "destination": "LHR", "cabin": "business", "points": 85000 },
+    { "origin": "HKG", "destination": "CDG", "cabin": "business", "points": 85000 },
+    { "origin": "HKG", "destination": "LAX", "cabin": "business", "points": 110000 }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "currency_code": "AM",
+  "samples": [
+    { "origin": "HKG", "destination": "BKK", "cabin": "economy", "cash_thb": 12000, "taxes_thb": 900 },
+    { "origin": "HKG", "destination": "BKK", "cabin": "business", "cash_thb": 46000, "taxes_thb": 1800 },
+    { "origin": "HKG", "destination": "SIN", "cabin": "economy", "cash_thb": 14000, "taxes_thb": 1000 },
+    { "origin": "HKG", "destination": "SIN", "cabin": "business", "cash_thb": 52000, "taxes_thb": 1900 },
+    { "origin": "HKG", "destination": "NRT", "cabin": "economy", "cash_thb": 22000, "taxes_thb": 1400 },
+    { "origin": "HKG", "destination": "NRT", "cabin": "business", "cash_thb": 72000, "taxes_thb": 2600 },
+    { "origin": "HKG", "destination": "ICN", "cabin": "business", "cash_thb": 68000, "taxes_thb": 2500 },
+    { "origin": "HKG", "destination": "TPE", "cabin": "economy", "cash_thb": 9500, "taxes_thb": 600 },
+    { "origin": "HKG", "destination": "TPE", "cabin": "business", "cash_thb": 36000, "taxes_thb": 1200 },
+    { "origin": "HKG", "destination": "SYD", "cabin": "business", "cash_thb": 125000, "taxes_thb": 4500 },
+    { "origin": "HKG", "destination": "LHR", "cabin": "business", "cash_thb": 145000, "taxes_thb": 9000 },
+    { "origin": "HKG", "destination": "CDG", "cabin": "business", "cash_thb": 138000, "taxes_thb": 8500 },
+    { "origin": "HKG", "destination": "LAX", "cabin": "business", "cash_thb": 160000, "taxes_thb": 8000 }
+  ]
+}
