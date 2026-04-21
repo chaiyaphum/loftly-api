@@ -10,6 +10,10 @@ from collections.abc import AsyncIterator
 os.environ.setdefault("LOFTLY_ENV", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("JWT_SIGNING_KEY", "test-secret")
+os.environ.setdefault(
+    "AFFILIATE_PARTNER_SECRETS",
+    '{"test-partner": "shhh-test-secret"}',
+)
 
 import pytest
 import pytest_asyncio
@@ -27,6 +31,7 @@ from loftly.db.seed import seed_all
 # into the `users` table by the `seeded_db` fixture so FK-ed rows can reference
 # it without violating the users_id FK.
 TEST_USER_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
+TEST_ADMIN_ID = uuid.UUID("00000000-0000-4000-8000-000000000009")
 
 
 @pytest.fixture(autouse=True)
@@ -58,16 +63,26 @@ async def app() -> AsyncIterator[object]:
 
 @pytest_asyncio.fixture
 async def seeded_db(app: object) -> AsyncIterator[object]:
-    """Seed banks + currencies + sample cards + the test user. Depends on `app`."""
+    """Seed banks + currencies + sample cards + the test users. Depends on `app`."""
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        # Insert the fake authenticated user first so later FKs (consent) work.
+        # Insert the fake authenticated users first so later FKs (consent,
+        # audit_log) work.
         session.add(
             User(
                 id=TEST_USER_ID,
                 email="test@loftly.test",
                 oauth_provider="google",
                 oauth_subject="test-subject",
+            )
+        )
+        session.add(
+            User(
+                id=TEST_ADMIN_ID,
+                email="admin@loftly.test",
+                oauth_provider="google",
+                oauth_subject="admin-subject",
+                role="admin",
             )
         )
         await session.commit()
@@ -91,5 +106,28 @@ async def seeded_client(seeded_db: object) -> AsyncIterator[AsyncClient]:
         yield c
 
 
+async def _mint_pair(client: AsyncClient, *, user_id: uuid.UUID, role: str) -> dict[str, str]:
+    """Hit the test-only token issuer and return auth headers {"Authorization": ...}."""
+    resp = await client.post(
+        "/v1/auth/_test/issue",
+        json={"user_id": str(user_id), "role": role, "locale": "th"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    return {"Authorization": f"Bearer {body['access_token']}"}
+
+
+@pytest_asyncio.fixture
+async def admin_headers(seeded_client: AsyncClient) -> dict[str, str]:
+    """Auth header for a real admin JWT minted via /v1/auth/_test/issue."""
+    return await _mint_pair(seeded_client, user_id=TEST_ADMIN_ID, role="admin")
+
+
+@pytest_asyncio.fixture
+async def user_headers(seeded_client: AsyncClient) -> dict[str, str]:
+    """Auth header for a real non-admin JWT."""
+    return await _mint_pair(seeded_client, user_id=TEST_USER_ID, role="user")
+
+
 # Re-export for test modules that want direct session access.
-__all__ = ["TEST_USER_ID", "get_session"]
+__all__ = ["TEST_ADMIN_ID", "TEST_USER_ID", "get_session"]
