@@ -10,6 +10,9 @@ already carries it.
 - `POST /v1/internal/audit-retention/run` — PDPA retention sweep (weekly cron).
 - `POST /v1/internal/content-stale-digest` — weekly content re-verification
   digest (Mon 09:00 ICT cron).
+- `GET  /v1/internal/cost-anomaly-check` — hourly LLM cost anomaly check;
+  leading indicator for the Anthropic rate-limit storm pattern (issue #14,
+  DRILL-002).
 """
 
 from __future__ import annotations
@@ -227,4 +230,33 @@ async def run_content_stale_digest(
     payload = result.to_log_dict()
     if not result.email_sent:
         response.status_code = status.HTTP_202_ACCEPTED
+    return payload
+
+
+@router.get(
+    "/cost-anomaly-check",
+    summary="Hourly LLM cost anomaly check (DRILL-002 leading indicator)",
+    response_model=None,
+)
+async def run_cost_anomaly_check(
+    response: Response,
+    _auth: None = Depends(require_internal_api_key),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Compute current-hour LLM cost vs. trailing 24h hourly mean.
+
+    Driven by the loftly-scheduler hourly cron at ``:05``. Returns the raw
+    numbers so the cron log is inspectable even when no anomaly fires.
+
+    Status codes:
+    - 200 — check ran, includes ``is_anomaly`` flag + numbers.
+    - 503 — Langfuse not configured or unreachable; payload carries
+      ``skip_reason`` so the caller can decide whether to retry or log-and-move.
+    """
+    from loftly.jobs.cost_anomaly import check_cost_anomaly
+
+    result = await check_cost_anomaly(session)
+    payload = result.to_log_dict()
+    if result.degraded:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return payload
