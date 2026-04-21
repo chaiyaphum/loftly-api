@@ -136,6 +136,30 @@ async def test_admin_flags_endpoint_lists_known_flags(
     assert hero["expected_variants"] == ["control", "variant_benefit_led", "variant_urgency"]
 
 
+async def test_admin_flags_endpoint_lists_post_v1_flags(
+    seeded_client: AsyncClient,
+    admin_headers: dict[str, str],
+) -> None:
+    """POST_V1 Tier A §1 + §3 register two boolean flags, default OFF."""
+    resp = await seeded_client.get("/v1/admin/feature-flags", headers=admin_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    keys = [f["key"] for f in body["flags"]]
+    assert "post_v1_selector_chat" in keys
+    assert "post_v1_returning_landing" in keys
+
+    chat = next(f for f in body["flags"] if f["key"] == "post_v1_selector_chat")
+    assert chat["type"] == "boolean"
+    assert chat["expected_rollout_pct"] == 0
+    # Boolean flags probe to the `default=False` when PostHog is unconfigured.
+    assert chat["probe_value"] is False
+
+    landing = next(f for f in body["flags"] if f["key"] == "post_v1_returning_landing")
+    assert landing["type"] == "boolean"
+    assert landing["expected_rollout_pct"] == 0
+    assert landing["probe_value"] is False
+
+
 async def test_admin_flags_requires_admin(
     seeded_client: AsyncClient,
 ) -> None:
