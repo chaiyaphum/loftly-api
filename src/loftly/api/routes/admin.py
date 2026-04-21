@@ -26,7 +26,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, Header, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from jose import JWTError
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -37,10 +37,12 @@ from loftly.core.settings import Settings, get_settings
 from loftly.db.audit import log_action
 from loftly.db.engine import get_session
 from loftly.db.models.article import Article
+from loftly.db.models.audit import AuditLog
 from loftly.db.models.bank import Bank as BankModel
 from loftly.db.models.card import Card as CardModel
 from loftly.db.models.loyalty_currency import LoyaltyCurrency
 from loftly.db.models.promo import Promo, promo_card_map
+from loftly.db.models.user import User
 from loftly.schemas.cards import BankMini, Card, CardList, Currency, SignupBonus
 from loftly.schemas.common import Pagination
 
@@ -635,6 +637,287 @@ def _optional_uuid(value: Any) -> uuid.UUID | None:
     if value in (None, ""):
         return None
     return uuid.UUID(str(value))
+
+
+# ---------------------------------------------------------------------------
+# Article re-verification (90-day stale list) — UI_CONTENT.md §Re-verification.
+# ---------------------------------------------------------------------------
+
+
+_STALE_PAGE_SIZE = 20
+_STALE_DEFAULT_DAYS = 90
+# Belt-and-braces — the `articles_state_check` DB constraint already enforces
+# the allowed set; this list only exists so the query-string filter rejects
+# garbage before we hit the DB.
+_STALE_STATE_VALUES = ("draft", "review", "published", "archived")
+
+
+async def _last_reviewed_by(
+    session: AsyncSession,
+    article_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, dict[str, Any]]:
+    """Return {article_id: {"actor_id", "actor_email", "reviewed_at"}} for the
+    most-recent `article.reviewed` audit row per article.
+
+    Done in one query (MAX(created_at) grouped by subject_id) so the stale list
+    avoids N+1. Only covers `article.reviewed` — not `article.updated` — because
+    the "last reviewed" column is specifically about the re-verification sweep.
+    """
+    if not article_ids:
+        return {}
+
+    # Subquery: latest reviewed-at per article.
+    latest = (
+        select(
+            AuditLog.subject_id.label("article_id"),
+            func.max(AuditLog.created_at).label("reviewed_at"),
+        )
+        .where(
+            AuditLog.action == "article.reviewed",
+            AuditLog.subject_type == "article",
+            AuditLog.subject_id.in_(article_ids),
+        )
+        .group_by(AuditLog.subject_id)
+        .subquery()
+    )
+
+    rows = (
+        await session.execute(
+            select(
+                latest.c.article_id,
+                latest.c.reviewed_at,
+                AuditLog.actor_id,
+                User.email,
+            )
+            .join(
+                AuditLog,
+                and_(
+                    AuditLog.subject_id == latest.c.article_id,
+                    AuditLog.created_at == latest.c.reviewed_at,
+                    AuditLog.action == "article.reviewed",
+                    AuditLog.subject_type == "article",
+                ),
+            )
+            .join(User, User.id == AuditLog.actor_id)
+        )
+    ).all()
+
+    # If two reviews landed in the same microsecond we just take the first row
+    # we see — either is fine for display purposes.
+    out: dict[uuid.UUID, dict[str, Any]] = {}
+    for article_id, reviewed_at, actor_id, email in rows:
+        key = uuid.UUID(str(article_id))
+        if key in out:
+            continue
+        out[key] = {
+            "actor_id": str(actor_id),
+            "actor_email": email,
+            "reviewed_at": reviewed_at.isoformat() if reviewed_at else None,
+        }
+    return out
+
+
+def _stale_row_to_dict(
+    row: Article,
+    *,
+    card: CardModel | None,
+    bank: BankModel | None,
+    last_review: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "id": str(row.id),
+        "slug": row.slug,
+        "title_th": row.title_th,
+        "state": row.state,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "policy_version": row.policy_version,
+        "card": (
+            {
+                "id": str(card.id),
+                "slug": card.slug,
+                "display_name": card.display_name,
+            }
+            if card is not None
+            else None
+        ),
+        "bank": (
+            {
+                "slug": bank.slug,
+                "display_name_en": bank.display_name_en,
+                "display_name_th": bank.display_name_th,
+            }
+            if bank is not None
+            else None
+        ),
+        "last_reviewed_by": last_review,
+    }
+
+
+@router.get("/articles/stale", summary="List articles overdue for re-verification")
+async def list_stale_articles(
+    days: int = Query(default=_STALE_DEFAULT_DAYS, ge=1, le=3650),
+    state: str = Query(default="published"),
+    issuer: str | None = Query(default=None, description="Bank slug filter"),
+    page: int = Query(default=1, ge=1),
+    _admin_id: uuid.UUID = Depends(get_current_admin_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Return articles whose `updated_at` is older than `days` days, sorted
+    oldest-first.
+
+    Default `state=published` matches UI_CONTENT.md §Re-verification cadence —
+    drafts and archived content are out of scope for the sweep. Pagination: 20
+    per page; `total` reflects the unpaginated count so the caller can render
+    "You have N articles needing re-verification".
+    """
+    if state not in _STALE_STATE_VALUES:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="invalid_state",
+            message_en=f"state must be one of {_STALE_STATE_VALUES}.",
+            message_th="สถานะไม่ถูกต้อง",
+        )
+
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+
+    filters = [Article.state == state, Article.updated_at < cutoff]
+    # `issuer` filters on bank slug via a subquery against the article's card.
+    if issuer:
+        bank_row = (
+            await session.execute(select(BankModel.id).where(BankModel.slug == issuer))
+        ).scalar_one_or_none()
+        if bank_row is None:
+            # Unknown issuer → empty result, not 404. Admins may mistype slugs
+            # and we don't want the page to explode.
+            return {
+                "data": [],
+                "pagination": {
+                    "page": page,
+                    "page_size": _STALE_PAGE_SIZE,
+                    "total": 0,
+                    "has_more": False,
+                },
+                "threshold_days": days,
+                "cutoff": cutoff.isoformat(),
+            }
+        card_ids_stmt = select(CardModel.id).where(CardModel.bank_id == bank_row)
+        filters.append(Article.card_id.in_(card_ids_stmt))
+
+    total = (await session.execute(select(func.count(Article.id)).where(*filters))).scalar_one()
+
+    stmt = (
+        select(Article)
+        .where(*filters)
+        .order_by(Article.updated_at.asc())
+        .offset((page - 1) * _STALE_PAGE_SIZE)
+        .limit(_STALE_PAGE_SIZE)
+    )
+    rows = list((await session.execute(stmt)).scalars().all())
+
+    # Preload cards + banks to avoid N+1.
+    card_ids = [r.card_id for r in rows if r.card_id is not None]
+    cards_by_id: dict[uuid.UUID, CardModel] = {}
+    banks_by_card_id: dict[uuid.UUID, BankModel] = {}
+    if card_ids:
+        card_rows = (
+            (
+                await session.execute(
+                    select(CardModel)
+                    .options(joinedload(CardModel.bank))
+                    .where(CardModel.id.in_(card_ids))
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+        for c in card_rows:
+            cards_by_id[uuid.UUID(str(c.id))] = c
+            banks_by_card_id[uuid.UUID(str(c.id))] = c.bank
+
+    last_reviewed = await _last_reviewed_by(session, [uuid.UUID(str(r.id)) for r in rows])
+
+    data: list[dict[str, Any]] = []
+    for r in rows:
+        card = cards_by_id.get(uuid.UUID(str(r.card_id))) if r.card_id else None
+        bank = banks_by_card_id.get(uuid.UUID(str(r.card_id))) if r.card_id else None
+        data.append(
+            _stale_row_to_dict(
+                r,
+                card=card,
+                bank=bank,
+                last_review=last_reviewed.get(uuid.UUID(str(r.id))),
+            )
+        )
+
+    return {
+        "data": data,
+        "pagination": {
+            "page": page,
+            "page_size": _STALE_PAGE_SIZE,
+            "total": int(total),
+            "has_more": page * _STALE_PAGE_SIZE < int(total),
+        },
+        "threshold_days": days,
+        "cutoff": cutoff.isoformat(),
+    }
+
+
+@router.post(
+    "/articles/{article_id}/mark-reviewed",
+    summary="Stamp updated_at = NOW() and record an article.reviewed audit row",
+)
+async def mark_article_reviewed(
+    article_id: uuid.UUID,
+    admin_id: uuid.UUID = Depends(get_current_admin_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Idempotent per UI_CONTENT.md §Re-verification: called twice inside 24h
+    still records both audit rows (so we have a log of every reviewer click),
+    but the content itself is not otherwise touched.
+
+    NB: we set `updated_at` explicitly rather than relying on the Postgres
+    `set_updated_at()` trigger because the trigger only fires on UPDATE. An
+    audit-only "review" needs the column bumped so the article drops off the
+    stale list. Other editorial fields are deliberately left alone.
+    """
+    row = (
+        (await session.execute(select(Article).where(Article.id == article_id)))
+        .scalars()
+        .one_or_none()
+    )
+    if row is None:
+        raise LoftlyError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="article_not_found",
+            message_en=f"No article with id {article_id}.",
+            message_th="ไม่พบบทความ",
+        )
+
+    now = datetime.now(UTC)
+    row.updated_at = now
+    await session.flush()
+
+    await log_action(
+        session,
+        actor_id=admin_id,
+        action="article.reviewed",
+        subject_type="article",
+        subject_id=row.id,
+        metadata={
+            "action_type": "article_reviewed",
+            "slug": row.slug,
+            "state": row.state,
+        },
+    )
+    await session.commit()
+
+    return {
+        "id": str(row.id),
+        "slug": row.slug,
+        "state": row.state,
+        "updated_at": row.updated_at.isoformat(),
+    }
 
 
 # ---------------------------------------------------------------------------
