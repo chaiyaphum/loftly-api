@@ -82,6 +82,17 @@ class Settings(BaseSettings):
 
     # --- Email ---
     resend_api_key: str | None = Field(default=None)
+    resend_from_address: str = Field(default="Loftly <noreply@loftly.co.th>")
+
+    # --- OAuth providers (optional; stub mode when unset) ---
+    loftly_oauth_google_client_id: str | None = Field(default=None)
+    loftly_oauth_google_client_secret: str | None = Field(default=None)
+    loftly_oauth_apple_client_id: str | None = Field(default=None)
+    loftly_oauth_apple_team_id: str | None = Field(default=None)
+    loftly_oauth_apple_key_id: str | None = Field(default=None)
+    loftly_oauth_apple_private_key: str | None = Field(default=None)
+    loftly_oauth_line_client_id: str | None = Field(default=None)
+    loftly_oauth_line_client_secret: str | None = Field(default=None)
 
     # --- Affiliate partner HMAC secrets ---
     # JSON map partner_id -> shared_secret. Example:
