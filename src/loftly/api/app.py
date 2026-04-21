@@ -41,6 +41,7 @@ from loftly.api.routes import (
     promos,
     selector,
     selector_chat,
+    tracking,
     valuations,
     waitlist,
     webhooks,
@@ -251,6 +252,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_ingestion.router)
     app.include_router(admin_metrics.router)
     app.include_router(internal.router)
+    app.include_router(tracking.router)
     app.include_router(waitlist.router)
     app.include_router(webhooks.router)
 
