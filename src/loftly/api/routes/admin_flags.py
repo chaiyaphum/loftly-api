@@ -49,6 +49,16 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "expected_variants": [True, False],
         "expected_rollout_pct": 0,
     },
+    {
+        "key": "landing_hero_cta",
+        "description": (
+            "Landing-page hero copy A/B. variant_benefit_led tests benefit framing; "
+            "variant_urgency tests loss-aversion framing. Owner: founder."
+        ),
+        "type": "multivariate",
+        "expected_variants": ["control", "variant_benefit_led", "variant_urgency"],
+        "expected_rollout_pct": 100,
+    },
 ]
 
 
