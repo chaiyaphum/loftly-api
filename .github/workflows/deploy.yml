@@ -1,0 +1,71 @@
+name: deploy
+
+# Deploy to Fly.io staging. Two triggers:
+#   - Manual via workflow_dispatch
+#   - On push to main, gated on repo var DEPLOY_ENABLED=true (default false
+#     so merges don't auto-deploy until the team flips the switch)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      vars.DEPLOY_ENABLED == 'true'
+    env:
+      FLY_APP: loftly-api-staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure FLY_API_TOKEN secret is configured
+        run: |
+          if [ -z "${{ secrets.FLY_API_TOKEN }}" ]; then
+            echo "ERROR: repository secret FLY_API_TOKEN is not set."
+            echo "Add it under Settings → Secrets → Actions."
+            exit 1
+          fi
+
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.10.8"
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run Alembic migrations (staging DB)
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          JWT_SIGNING_KEY: ${{ secrets.STAGING_JWT_SIGNING_KEY }}
+        run: |
+          if [ -n "$DATABASE_URL" ]; then
+            uv run alembic upgrade head
+          else
+            echo "STAGING_DATABASE_URL not set — skipping migration step (fly release_command will run)"
+          fi
+
+      - name: Deploy to Fly.io
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --app "$FLY_APP" --remote-only
+
+      - name: Smoke-test /healthz
+        run: |
+          sleep 10
+          curl -fsSL "https://$FLY_APP.fly.dev/healthz" | tee /tmp/health.json
+          grep -q '"status":"ok"' /tmp/health.json
