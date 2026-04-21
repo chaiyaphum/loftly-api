@@ -60,15 +60,40 @@ class Base(DeclarativeBase):
 # Import models so they register with Base.metadata.
 # (These imports must follow `Base` to avoid circular refs; the `noqa: E402`
 # suppresses the import-at-top rule for that specific reason.)
+from loftly.db.models.affiliate import (  # noqa: E402
+    AffiliateClick,
+    AffiliateConversion,
+    AffiliateLink,
+)
+from loftly.db.models.article import Article  # noqa: E402
+from loftly.db.models.audit import AuditLog, SyncRun  # noqa: E402
 from loftly.db.models.bank import Bank  # noqa: E402
 from loftly.db.models.card import Card  # noqa: E402
 from loftly.db.models.consent import UserConsent  # noqa: E402
+from loftly.db.models.loyalty_currency import LoyaltyCurrency  # noqa: E402
+from loftly.db.models.point_valuation import PointValuation  # noqa: E402
+from loftly.db.models.promo import Promo, promo_card_map  # noqa: E402
+from loftly.db.models.transfer_ratio import TransferRatio  # noqa: E402
 from loftly.db.models.user import User  # noqa: E402
+from loftly.db.models.user_card import UserCard  # noqa: E402
 
 __all__ = [
+    "GUID",
+    "AffiliateClick",
+    "AffiliateConversion",
+    "AffiliateLink",
+    "Article",
+    "AuditLog",
     "Bank",
     "Base",
     "Card",
+    "LoyaltyCurrency",
+    "PointValuation",
+    "Promo",
+    "SyncRun",
+    "TransferRatio",
     "User",
+    "UserCard",
     "UserConsent",
+    "promo_card_map",
 ]

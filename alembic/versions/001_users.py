@@ -14,6 +14,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from loftly.db.migration_helpers import is_postgres, now_default, uuid_type
+
 # revision identifiers, used by Alembic.
 revision: str = "001_users"
 down_revision: str | None = None
@@ -33,21 +35,29 @@ $$ LANGUAGE plpgsql;
 DROP_SET_UPDATED_AT_FN = "DROP FUNCTION IF EXISTS set_updated_at();"
 
 
-def upgrade() -> None:
-    # pgcrypto for gen_random_uuid(); safe to run repeatedly.
-    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+def _uuid_pk() -> sa.Column[object]:
+    """Primary key column — server-side gen on Postgres; Python-side on SQLite."""
+    if is_postgres():
+        return sa.Column(
+            "id",
+            uuid_type(),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        )
+    return sa.Column("id", uuid_type(), primary_key=True)
 
-    # Shared updated_at touch function — used by later migrations' triggers.
-    op.execute(SET_UPDATED_AT_FN)
+
+def upgrade() -> None:
+    if is_postgres():
+        # pgcrypto for gen_random_uuid(); safe to run repeatedly.
+        op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+
+        # Shared updated_at touch function — used by later migrations' triggers.
+        op.execute(SET_UPDATED_AT_FN)
 
     op.create_table(
         "users",
-        sa.Column(
-            "id",
-            sa.dialects.postgresql.UUID(as_uuid=True),
-            primary_key=True,
-            server_default=sa.text("gen_random_uuid()"),
-        ),
+        _uuid_pk(),
         sa.Column("email", sa.Text(), nullable=False),
         sa.Column("phone", sa.Text(), nullable=True),
         sa.Column("oauth_provider", sa.Text(), nullable=False),
@@ -68,7 +78,7 @@ def upgrade() -> None:
             "created_at",
             sa.TIMESTAMP(timezone=True),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=now_default(),
         ),
         sa.Column("deleted_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.CheckConstraint(
@@ -91,25 +101,23 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_index(
-        "idx_users_deleted_at",
-        "users",
-        ["deleted_at"],
-        postgresql_where=sa.text("deleted_at IS NOT NULL"),
-    )
+    if is_postgres():
+        op.create_index(
+            "idx_users_deleted_at",
+            "users",
+            ["deleted_at"],
+            postgresql_where=sa.text("deleted_at IS NOT NULL"),
+        )
+    else:
+        op.create_index("idx_users_deleted_at", "users", ["deleted_at"])
 
     # user_consents — append-only. NO ON DELETE CASCADE on user_id per PDPA (SCHEMA.md §2).
     op.create_table(
         "user_consents",
-        sa.Column(
-            "id",
-            sa.dialects.postgresql.UUID(as_uuid=True),
-            primary_key=True,
-            server_default=sa.text("gen_random_uuid()"),
-        ),
+        _uuid_pk(),
         sa.Column(
             "user_id",
-            sa.dialects.postgresql.UUID(as_uuid=True),
+            uuid_type(),
             sa.ForeignKey("users.id"),
             nullable=False,
         ),
@@ -123,7 +131,7 @@ def upgrade() -> None:
             "granted_at",
             sa.TIMESTAMP(timezone=True),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=now_default(),
         ),
         sa.CheckConstraint(
             "purpose IN ('optimization','marketing','analytics','sharing')",
@@ -135,11 +143,18 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_index(
-        "idx_user_consents_user_purpose_latest",
-        "user_consents",
-        ["user_id", "purpose", sa.text("granted_at DESC")],
-    )
+    if is_postgres():
+        op.create_index(
+            "idx_user_consents_user_purpose_latest",
+            "user_consents",
+            ["user_id", "purpose", sa.text("granted_at DESC")],
+        )
+    else:
+        op.create_index(
+            "idx_user_consents_user_purpose_latest",
+            "user_consents",
+            ["user_id", "purpose", "granted_at"],
+        )
 
 
 def downgrade() -> None:
@@ -149,4 +164,5 @@ def downgrade() -> None:
     op.drop_index("idx_users_deleted_at", table_name="users")
     op.drop_table("users")
 
-    op.execute(DROP_SET_UPDATED_AT_FN)
+    if is_postgres():
+        op.execute(DROP_SET_UPDATED_AT_FN)
