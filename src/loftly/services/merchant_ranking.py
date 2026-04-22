@@ -404,7 +404,7 @@ async def rank_cards_for_merchant(
 
         currency_code = card.earn_currency.code if card.earn_currency else None
         valuation = valuations.get(currency_code or "")
-        thb_per_point = float(valuation.thb_per_point) if valuation else 0.0
+        thb_per_point = float(valuation.thb_per_point) if valuation else 0.0  # type: ignore[attr-defined]
         if valuation is None:
             applied_rules.append("missing_valuation")
         elif isinstance(valuation, _FallbackValuation):
@@ -416,7 +416,7 @@ async def rank_cards_for_merchant(
         # Points earned per THB of spend × THB_PER_POINT × 1000
         effective_rate = base_rate + uplift_total
         est_value = effective_rate * thb_per_point * BASE_SPEND_THB
-        confidence = float(valuation.confidence) if valuation else 0.0
+        confidence = float(valuation.confidence) if valuation else 0.0  # type: ignore[attr-defined]
         if 0 < confidence < MIN_VALUATION_CONFIDENCE_FOR_FIRM_DISPLAY:
             applied_rules.append(f"low_valuation_confidence:{round(confidence, 2)}")
 
