@@ -16,7 +16,7 @@ from datetime import UTC, date, datetime
 from typing import cast
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loftly.api.errors import LoftlyError
@@ -30,6 +30,7 @@ from loftly.schemas.promos import (
     BankRef,
     MerchantCanonicalRef,
     PromoListItem,
+    PromoListMeta,
     PromoListResponse,
     PromoType,
 )
@@ -56,12 +57,17 @@ def _check_rate(request: Request) -> None:
         )
 
 
-async def _latest_sync_age_hours(session: AsyncSession) -> float | None:
-    """Hours since the most recent successful deal-harvester sync.
+async def _latest_sync_finished_at(session: AsyncSession) -> datetime | None:
+    """Timestamp of the most recent successful deal-harvester sync.
 
     `None` means no successful sync has ever run (fresh install, or every
     attempt so far has failed). The public endpoint still returns data —
-    callers use the header to decide whether to trust the snapshot.
+    callers use `meta.last_synced_at` / the `X-Promo-Sync-Age-Hours` header
+    to decide whether to trust the snapshot.
+
+    Always returns an aware UTC datetime when non-null (SQLite hands back
+    naive timestamps; we normalize here so downstream serialization emits
+    an ISO-8601 string with `+00:00`).
     """
     stmt = (
         select(SyncRun.finished_at)
@@ -76,8 +82,12 @@ async def _latest_sync_age_hours(session: AsyncSession) -> float | None:
     row = (await session.execute(stmt)).scalar_one_or_none()
     if row is None:
         return None
-    # Normalize to aware UTC — SQLite may return naive.
-    finished = row if row.tzinfo else row.replace(tzinfo=UTC)
+    return row if row.tzinfo else row.replace(tzinfo=UTC)
+
+
+def _age_hours(finished: datetime | None) -> float | None:
+    if finished is None:
+        return None
     delta = datetime.now(UTC) - finished
     return round(delta.total_seconds() / 3600.0, 2)
 
@@ -155,6 +165,58 @@ async def list_promos(
     )
 
     total = len((await session.execute(count_stmt)).scalars().all())
+
+    # Aggregate coverage counts for `meta` — distinct banks and distinct
+    # (non-null) merchant_names across the SAME filter set used for `items`.
+    # Separate queries instead of piggy-backing on the item fetch because we
+    # want the counts across ALL filtered rows, not just the current page.
+    banks_count_stmt = (
+        select(func.count(func.distinct(Promo.bank_id)))
+        .select_from(Promo)
+        .join(Bank, Promo.bank_id == Bank.id)
+    )
+    merchants_count_stmt = (
+        select(func.count(func.distinct(Promo.merchant_name)))
+        .select_from(Promo)
+        .join(Bank, Promo.bank_id == Bank.id)
+        .where(Promo.merchant_name.is_not(None))
+    )
+
+    if active:
+        banks_count_stmt = banks_count_stmt.where(Promo.active.is_(True))
+        merchants_count_stmt = merchants_count_stmt.where(Promo.active.is_(True))
+    if bank:
+        banks_count_stmt = banks_count_stmt.where(Bank.slug == bank)
+        merchants_count_stmt = merchants_count_stmt.where(Bank.slug == bank)
+    if category:
+        banks_count_stmt = banks_count_stmt.where(Promo.category == category)
+        merchants_count_stmt = merchants_count_stmt.where(Promo.category == category)
+    if merchant_name:
+        pattern = f"%{merchant_name.lower()}%"
+        banks_count_stmt = banks_count_stmt.where(Promo.merchant_name.ilike(pattern))
+        merchants_count_stmt = merchants_count_stmt.where(Promo.merchant_name.ilike(pattern))
+    if expiring_within_days is not None:
+        from datetime import timedelta
+
+        cutoff2: date = datetime.now(UTC).date() + timedelta(days=expiring_within_days)
+        banks_count_stmt = banks_count_stmt.where(
+            Promo.valid_until.is_not(None), Promo.valid_until <= cutoff2
+        )
+        merchants_count_stmt = merchants_count_stmt.where(
+            Promo.valid_until.is_not(None), Promo.valid_until <= cutoff2
+        )
+    if card_id:
+        sub2 = (
+            select(promo_card_map.c.promo_id)
+            .where(promo_card_map.c.promo_id == Promo.id)
+            .where(promo_card_map.c.card_id == card_id)
+        )
+        banks_count_stmt = banks_count_stmt.where(sub2.exists())
+        merchants_count_stmt = merchants_count_stmt.where(sub2.exists())
+
+    banks_count = (await session.execute(banks_count_stmt)).scalar_one() or 0
+    merchants_count = (await session.execute(merchants_count_stmt)).scalar_one() or 0
+
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     rows = list((await session.execute(stmt)).scalars().unique().all())
 
@@ -236,7 +298,8 @@ async def list_promos(
             )
         )
 
-    age = await _latest_sync_age_hours(session)
+    last_synced_at = await _latest_sync_finished_at(session)
+    age = _age_hours(last_synced_at)
     response.headers["X-Promo-Sync-Age-Hours"] = str(age) if age is not None else "unknown"
 
     pages = (total + page_size - 1) // page_size if total else 0
@@ -246,4 +309,10 @@ async def list_promos(
         page=page,
         page_size=page_size,
         pages=pages,
+        meta=PromoListMeta(
+            total=total,
+            banks=banks_count,
+            merchants=merchants_count,
+            last_synced_at=last_synced_at,
+        ),
     )
