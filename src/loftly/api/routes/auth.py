@@ -208,9 +208,7 @@ async def magic_link_request(
             row = (
                 (
                     await session.execute(
-                        select(SelectorSession).where(
-                            SelectorSession.id == payload.session_id
-                        )
+                        select(SelectorSession).where(SelectorSession.id == payload.session_id)
                     )
                 )
                 .scalars()

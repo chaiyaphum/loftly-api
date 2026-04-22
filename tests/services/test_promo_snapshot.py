@@ -43,15 +43,9 @@ async def _get_seed_bank_and_card() -> tuple[Bank, Card | None]:
     """Pull the seeded kbank + the first kbank card for promo FK satisfaction."""
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        bank = (
-            (await session.execute(select(Bank).where(Bank.slug == "kbank")))
-            .scalars()
-            .one()
-        )
+        bank = (await session.execute(select(Bank).where(Bank.slug == "kbank"))).scalars().one()
         card = (
-            (await session.execute(select(Card).where(Card.bank_id == bank.id)))
-            .scalars()
-            .first()
+            (await session.execute(select(Card).where(Card.bank_id == bank.id))).scalars().first()
         )
     return bank, card
 
@@ -121,12 +115,8 @@ async def test_excludes_expired_promos(seeded_db: object) -> None:
 
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        session.add(
-            _make_promo(bank.id, title_th="Valid", valid_until=today + timedelta(days=30))
-        )
-        session.add(
-            _make_promo(bank.id, title_th="Expired", valid_until=today - timedelta(days=1))
-        )
+        session.add(_make_promo(bank.id, title_th="Valid", valid_until=today + timedelta(days=30)))
+        session.add(_make_promo(bank.id, title_th="Expired", valid_until=today - timedelta(days=1)))
         # valid_until IS NULL is always valid (evergreen bank promo).
         session.add(_make_promo(bank.id, title_th="Evergreen", valid_until=None))
         # valid_from in the future excludes.
@@ -166,7 +156,8 @@ async def test_ranking_cards_first_then_discount_then_expiry(seeded_db: object) 
         # p1: mapped card, discount 10, expires in 30d — should rank above p2
         #     because discount_amount > p2.
         p1 = _make_promo(
-            bank.id, title_th="Mapped-10-30d",
+            bank.id,
+            title_th="Mapped-10-30d",
             discount_amount=Decimal("10.00"),
             valid_until=today + timedelta(days=30),
             external_checksum="p1",
@@ -177,7 +168,8 @@ async def test_ranking_cards_first_then_discount_then_expiry(seeded_db: object) 
         # p2: mapped card, discount 5, expires in 5d. Lower discount than p1 but
         # still ranks above unmapped promos.
         p2 = _make_promo(
-            bank.id, title_th="Mapped-5-5d",
+            bank.id,
+            title_th="Mapped-5-5d",
             discount_amount=Decimal("5.00"),
             valid_until=today + timedelta(days=5),
             external_checksum="p2",
@@ -187,7 +179,8 @@ async def test_ranking_cards_first_then_discount_then_expiry(seeded_db: object) 
 
         # p3: unmapped (cards=[]), discount 50 — ranks LAST despite largest discount.
         p3 = _make_promo(
-            bank.id, title_th="Unmapped-50",
+            bank.id,
+            title_th="Unmapped-50",
             discount_amount=Decimal("50.00"),
             valid_until=today + timedelta(days=30),
             external_checksum="p3",
@@ -263,9 +256,7 @@ async def test_digest_changes_when_checksum_changes(seeded_db: object) -> None:
 
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        promo = _make_promo(
-            bank.id, title_th="changing", external_checksum="v1"
-        )
+        promo = _make_promo(bank.id, title_th="changing", external_checksum="v1")
         session.add(promo)
         await session.commit()
 

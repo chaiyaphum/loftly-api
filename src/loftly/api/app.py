@@ -116,9 +116,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # useful to report and the loop clutters test logs.
     pool_task: asyncio.Task[None] | None = None
     if not settings.is_test:
-        pool_task = asyncio.create_task(
-            _db_pool_snapshot_loop(log), name="db_pool_snapshot_loop"
-        )
+        pool_task = asyncio.create_task(_db_pool_snapshot_loop(log), name="db_pool_snapshot_loop")
     try:
         yield
     finally:

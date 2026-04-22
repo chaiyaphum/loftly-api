@@ -124,9 +124,7 @@ async def build_promo_snapshot(
     def _rank_key(p: Promo) -> tuple[int, float, float]:
         has_cards = 1 if p.cards else 0
         discount = -float(p.discount_amount or 0)
-        days_to_expire = (
-            (p.valid_until - as_of).days if p.valid_until else 10_000
-        )
+        days_to_expire = (p.valid_until - as_of).days if p.valid_until else 10_000
         return (-has_cards, discount, float(days_to_expire))
 
     ranked = sorted(all_promos, key=_rank_key)[:max_entries]
@@ -149,9 +147,7 @@ async def build_promo_snapshot(
     # Digest = sha256 over sorted (id, external_checksum) pairs. A promo being
     # updated by deal-harvester changes external_checksum -> digest changes
     # -> Selector cache key changes -> stale context evicted naturally.
-    digest_material = sorted(
-        (str(p.id), p.external_checksum or "") for p in ranked
-    )
+    digest_material = sorted((str(p.id), p.external_checksum or "") for p in ranked)
     digest = hashlib.sha256(
         json.dumps(digest_material, sort_keys=True).encode("utf-8")
     ).hexdigest()[:16]
@@ -186,7 +182,7 @@ def serialize_snapshot_for_prompt(snapshot: PromoSnapshot) -> str:
     """
     if snapshot.status != "ok":
         return (
-            f"<active_promos status=\"{snapshot.status}\">\n"
+            f'<active_promos status="{snapshot.status}">\n'
             "PROMO_CONTEXT_UNAVAILABLE: selector should not cite promos.\n"
             "</active_promos>"
         )

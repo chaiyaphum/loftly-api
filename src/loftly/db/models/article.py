@@ -39,9 +39,7 @@ class Article(Base):
     # Nullable FK → `authors.id` — display byline (see migration 017). Distinct
     # from `author_id` which is the authoring user (editorial ownership).
     # NULL means "render the default Loftly org byline" on the frontend.
-    authors_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("authors.id"), nullable=True
-    )
+    authors_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("authors.id"), nullable=True)
     policy_version: Mapped[str] = mapped_column(Text, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

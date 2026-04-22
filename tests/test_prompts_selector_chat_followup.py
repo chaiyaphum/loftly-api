@@ -101,8 +101,7 @@ def test_no_banned_phrases_in_prompt_text() -> None:
     scan_region = prompt.text.split("## Banned phrases", 1)[0]
     for phrase in BANNED_PHRASES:
         assert phrase.lower() not in scan_region.lower(), (
-            f"banned phrase {phrase!r} leaked into prompt body "
-            f"(before the Banned-phrases section)"
+            f"banned phrase {phrase!r} leaked into prompt body (before the Banned-phrases section)"
         )
 
 

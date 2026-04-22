@@ -541,9 +541,7 @@ async def test_http_route_rejects_garbage_as_of(
     assert resp.json()["error"]["code"] == "invalid_as_of"
 
 
-async def test_run_export_writes_file(
-    metrics_seeded: dict[str, object], tmp_path: Path
-) -> None:
+async def test_run_export_writes_file(metrics_seeded: dict[str, object], tmp_path: Path) -> None:
     _ = metrics_seeded
     out_path = tmp_path / "nested" / "metrics-2026-10.json"
     payload = await run_export(str(out_path), AS_OF)

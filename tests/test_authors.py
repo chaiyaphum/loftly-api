@@ -134,11 +134,7 @@ async def test_articles_authors_id_column_defaults_null(
         await session.commit()
 
     async with sessionmaker() as session:
-        row = (
-            await session.execute(
-                select(Article).where(Article.id == article_id)
-            )
-        ).scalar_one()
+        row = (await session.execute(select(Article).where(Article.id == article_id))).scalar_one()
     # authors_id stays NULL → frontend renders the default "Loftly" byline.
     assert row.authors_id is None
 

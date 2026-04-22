@@ -86,9 +86,7 @@ def load() -> ChatFollowupPrompt:
     """
     text = _PROMPT_MD_PATH.read_text(encoding="utf-8")
     if not text.strip():
-        raise RuntimeError(
-            f"selector_chat_followup.md is empty at {_PROMPT_MD_PATH}"
-        )
+        raise RuntimeError(f"selector_chat_followup.md is empty at {_PROMPT_MD_PATH}")
     return ChatFollowupPrompt(
         text=text,
         version=PROMPT_VERSION,

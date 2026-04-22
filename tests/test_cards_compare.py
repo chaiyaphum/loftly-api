@@ -93,14 +93,10 @@ async def test_compare_enriches_with_valuation_and_transfer_partners(
     async with sessionmaker() as session:
         # Source = K_POINT (for kbank-wisdom), destination = ROP.
         k_point = (
-            await session.execute(
-                select(LoyaltyCurrency).where(LoyaltyCurrency.code == "K_POINT")
-            )
+            await session.execute(select(LoyaltyCurrency).where(LoyaltyCurrency.code == "K_POINT"))
         ).scalar_one()
         rop = (
-            await session.execute(
-                select(LoyaltyCurrency).where(LoyaltyCurrency.code == "ROP")
-            )
+            await session.execute(select(LoyaltyCurrency).where(LoyaltyCurrency.code == "ROP"))
         ).scalar_one()
         session.add(
             PointValuation(
@@ -128,9 +124,7 @@ async def test_compare_enriches_with_valuation_and_transfer_partners(
         )
         await session.commit()
 
-    resp = await seeded_client.get(
-        "/v1/cards/compare", params={"slugs": "kbank-wisdom"}
-    )
+    resp = await seeded_client.get("/v1/cards/compare", params={"slugs": "kbank-wisdom"})
     assert resp.status_code == 200
     entry = resp.json()["data"][0]
     assert entry["valuation"] is not None
@@ -165,8 +159,6 @@ async def test_compare_card_row_touched(seeded_client: AsyncClient) -> None:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         row = (
-            await session.execute(
-                select(CardModel).where(CardModel.slug == "kbank-wisdom")
-            )
+            await session.execute(select(CardModel).where(CardModel.slug == "kbank-wisdom"))
         ).scalar_one_or_none()
         assert row is not None

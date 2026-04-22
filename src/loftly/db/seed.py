@@ -263,9 +263,7 @@ async def _seed_authors(session: AsyncSession) -> int:
     `/v1/authors/loftly` works against the in-memory SQLite DB.
     """
     existing = (
-        await session.execute(
-            select(Author).where(Author.id == LOFTLY_ORG_AUTHOR_ID)
-        )
+        await session.execute(select(Author).where(Author.id == LOFTLY_ORG_AUTHOR_ID))
     ).scalar_one_or_none()
     if existing is not None:
         return 0

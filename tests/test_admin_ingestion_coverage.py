@@ -58,10 +58,7 @@ async def _seed_coverage_mix(session: Any) -> dict[str, Bank]:
     * ``krungsri`` → 4 manual + 1 inactive         → ``partial``
     * ``ktc``      → 2 deal-harvester rows         → ``gap``
     """
-    banks = {
-        b.slug: b
-        for b in (await session.execute(select(Bank))).scalars().all()
-    }
+    banks = {b.slug: b for b in (await session.execute(select(Bank))).scalars().all()}
     # uob: 8 active manual
     for i in range(8):
         session.add(
@@ -117,9 +114,7 @@ async def test_coverage_classifies_banks_by_thresholds(
     async with sessionmaker() as session:
         await _seed_coverage_mix(session)
 
-    resp = await seeded_client.get(
-        "/v1/admin/ingestion/coverage", headers=admin_headers
-    )
+    resp = await seeded_client.get("/v1/admin/ingestion/coverage", headers=admin_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
@@ -156,11 +151,7 @@ async def test_coverage_unmapped_count(
         banks = await _seed_coverage_mix(session)
         # Map one of the ktc promos to a card so the unmapped count
         # excludes it.
-        card = (
-            (await session.execute(select(CardModel).limit(1)))
-            .scalars()
-            .one()
-        )
+        card = (await session.execute(select(CardModel).limit(1))).scalars().one()
         promo = (
             (
                 await session.execute(
@@ -173,14 +164,10 @@ async def test_coverage_unmapped_count(
             .scalars()
             .one()
         )
-        await session.execute(
-            promo_card_map.insert().values(promo_id=promo.id, card_id=card.id)
-        )
+        await session.execute(promo_card_map.insert().values(promo_id=promo.id, card_id=card.id))
         await session.commit()
 
-    resp = await seeded_client.get(
-        "/v1/admin/ingestion/coverage", headers=admin_headers
-    )
+    resp = await seeded_client.get("/v1/admin/ingestion/coverage", headers=admin_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
@@ -195,9 +182,7 @@ async def test_coverage_overall_pct_weights_full_and_partial(
     async with sessionmaker() as session:
         await _seed_coverage_mix(session)
 
-    resp = await seeded_client.get(
-        "/v1/admin/ingestion/coverage", headers=admin_headers
-    )
+    resp = await seeded_client.get("/v1/admin/ingestion/coverage", headers=admin_headers)
     body = resp.json()
 
     # Seed has 8 banks total; 2 are full/partial (uob, krungsri).
@@ -213,9 +198,7 @@ async def test_coverage_overall_pct_weights_full_and_partial(
 async def test_resync_unknown_bank_returns_404(
     seeded_client: AsyncClient, admin_headers: dict[str, str]
 ) -> None:
-    resp = await seeded_client.post(
-        "/v1/admin/ingestion/not-a-bank/resync", headers=admin_headers
-    )
+    resp = await seeded_client.post("/v1/admin/ingestion/not-a-bank/resync", headers=admin_headers)
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "bank_not_found"
 
@@ -237,9 +220,7 @@ async def test_resync_uob_calls_manual_ingest(
         "loftly.jobs.manual_catalog_ingest.run_ingest",
         new=AsyncMock(return_value=fake_result),
     ) as mock:
-        resp = await seeded_client.post(
-            "/v1/admin/ingestion/uob/resync", headers=admin_headers
-        )
+        resp = await seeded_client.post("/v1/admin/ingestion/uob/resync", headers=admin_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body == {
@@ -296,9 +277,7 @@ async def test_resync_harvester_bank_calls_adapter(
         "loftly.jobs.deal_harvester_sync.run_sync",
         new=AsyncMock(return_value=fake_run),
     ) as mock:
-        resp = await seeded_client.post(
-            "/v1/admin/ingestion/ktc/resync", headers=admin_headers
-        )
+        resp = await seeded_client.post("/v1/admin/ingestion/ktc/resync", headers=admin_headers)
     assert resp.status_code == 200, resp.text
     assert resp.json() == {
         "ok": True,
@@ -330,7 +309,5 @@ async def test_resync_requires_admin_auth(seeded_client: AsyncClient) -> None:
 async def test_coverage_forbids_non_admin(
     seeded_client: AsyncClient, user_headers: dict[str, str]
 ) -> None:
-    resp = await seeded_client.get(
-        "/v1/admin/ingestion/coverage", headers=user_headers
-    )
+    resp = await seeded_client.get("/v1/admin/ingestion/coverage", headers=user_headers)
     assert resp.status_code == 403

@@ -39,16 +39,12 @@ class MerchantCanonical(Base):
     display_name_en: Mapped[str] = mapped_column(Text, nullable=False)
     category_default: Mapped[str | None] = mapped_column(Text, nullable=True)
     # JSON at the ORM layer; migration casts to Postgres text[] for GIN.
-    alt_names: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, server_default=text("'[]'")
-    )
+    alt_names: Mapped[list[str]] = mapped_column(JSON, nullable=False, server_default=text("'[]'"))
     logo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     merchant_type: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'active'")
-    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
     merged_into_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("merchants_canonical.id"),
         nullable=True,
@@ -87,9 +83,7 @@ class PromoMerchantCanonicalMap(Base):
     mapped_at: Mapped[datetime] = mapped_column(
         nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
-    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
-    )
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     merchant: Mapped[MerchantCanonical] = relationship(

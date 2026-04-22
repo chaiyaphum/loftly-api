@@ -70,7 +70,9 @@ def _stub_posthog(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     """Capture PostHog events in a list instead of firing the network call."""
     events: list[dict[str, Any]] = []
 
-    async def _capture(event: str, distinct_id: str, properties: dict[str, Any] | None = None) -> None:
+    async def _capture(
+        event: str, distinct_id: str, properties: dict[str, Any] | None = None
+    ) -> None:
         events.append({"event": event, "distinct_id": distinct_id, "properties": properties or {}})
 
     monkeypatch.setattr(route_module, "posthog_capture", _capture)
@@ -158,9 +160,7 @@ async def test_email_gate_required_returns_403(
     sid = await _create_session(seeded_client)
     # Anon session (user_id=None + bound_at=None) with partial_unlock=True
     # should hit the email gate.
-    resp = await seeded_client.post(
-        f"/v1/selector/{sid}/chat", json={"question": "ทำไมอันดับ 1?"}
-    )
+    resp = await seeded_client.post(f"/v1/selector/{sid}/chat", json={"question": "ทำไมอันดับ 1?"})
     assert resp.status_code == 403, resp.text
     assert resp.json()["error"]["code"] == "email_gate_required"
 
@@ -183,9 +183,7 @@ async def test_rate_limit_returns_429_on_11th_call(
     for _ in range(10):
         await increment_chat_count(sid)
 
-    resp = await seeded_client.post(
-        f"/v1/selector/{sid}/chat", json={"question": "ทำไม KBank?"}
-    )
+    resp = await seeded_client.post(f"/v1/selector/{sid}/chat", json={"question": "ทำไม KBank?"})
     assert resp.status_code == 429, resp.text
     body = resp.json()
     assert "คำถามต่อเซสชันครบแล้ว" in body["error"]["message_th"]
@@ -290,9 +288,7 @@ async def test_haiku_timeout_returns_static_fallback(
     # Shorten the wait so the test doesn't take 5s.
     monkeypatch.setattr(route_module, "_HAIKU_TIMEOUT_SEC", 0.05)
 
-    resp = await seeded_client.post(
-        f"/v1/selector/{sid}/chat", json={"question": "ทำไม?"}
-    )
+    resp = await seeded_client.post(f"/v1/selector/{sid}/chat", json={"question": "ทำไม?"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     # Static fallback string must match the spec's Thai copy.
@@ -317,9 +313,7 @@ async def test_session_expired_no_cached_context_returns_410(
     sid = str(resp.json()["session_id"])
     await _bind_session_to_test_user(sid)
 
-    resp = await seeded_client.post(
-        f"/v1/selector/{sid}/chat", json={"question": "ทำไม?"}
-    )
+    resp = await seeded_client.post(f"/v1/selector/{sid}/chat", json={"question": "ทำไม?"})
     assert resp.status_code == 410, resp.text
     assert resp.json()["error"]["code"] == "session_expired"
 
@@ -329,9 +323,7 @@ async def test_invalid_session_id_returns_400(
     fresh_cache: InMemoryCache,
 ) -> None:
     _ = fresh_cache
-    resp = await seeded_client.post(
-        "/v1/selector/not-a-uuid/chat", json={"question": "hi"}
-    )
+    resp = await seeded_client.post("/v1/selector/not-a-uuid/chat", json={"question": "hi"})
     assert resp.status_code == 400, resp.text
     assert resp.json()["error"]["code"] == "invalid_session_id"
 
@@ -350,9 +342,7 @@ async def test_happy_path_emits_rerank_delivered(
     sid = await _create_session(seeded_client)
     await _bind_session_to_test_user(sid)
 
-    resp = await seeded_client.post(
-        f"/v1/selector/{sid}/chat", json={"question": "ทำไม?"}
-    )
+    resp = await seeded_client.post(f"/v1/selector/{sid}/chat", json={"question": "ทำไม?"})
     assert resp.status_code == 200, resp.text
     rerank_events = [e for e in _stub_posthog if e["event"] == "selector_chat_rerank_delivered"]
     assert len(rerank_events) == 1
@@ -369,9 +359,7 @@ async def test_selector_chat_opened_fires_only_once_per_session(
     await _bind_session_to_test_user(sid)
 
     for _ in range(3):
-        resp = await seeded_client.post(
-            f"/v1/selector/{sid}/chat", json={"question": "ทำไม?"}
-        )
+        resp = await seeded_client.post(f"/v1/selector/{sid}/chat", json={"question": "ทำไม?"})
         assert resp.status_code == 200, resp.text
 
     opened = [e for e in _stub_posthog if e["event"] == "selector_chat_opened"]
@@ -404,9 +392,7 @@ async def test_cost_cap_rejects_preflight_when_estimated_over_cap(
     # the pre-flight rejection — asserts the gate fires before any billable work.
     monkeypatch.setattr(route_module, "_CHAT_COST_CAP_THB", 0.0)
 
-    resp = await seeded_client.post(
-        f"/v1/selector/{sid}/chat", json={"question": "ทำไม?"}
-    )
+    resp = await seeded_client.post(f"/v1/selector/{sid}/chat", json={"question": "ทำไม?"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     # Haiku was NOT called — pre-flight gate stopped the bill.

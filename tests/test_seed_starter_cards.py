@@ -32,9 +32,7 @@ from loftly.db.models.loyalty_currency import LoyaltyCurrency
 from loftly.db.models.point_valuation import PointValuation
 from loftly.db.models.user import User
 
-CONTENT_DIR = (
-    Path(__file__).resolve().parent.parent.parent / "loftly" / "content" / "card_reviews"
-)
+CONTENT_DIR = Path(__file__).resolve().parent.parent.parent / "loftly" / "content" / "card_reviews"
 
 
 @pytest.fixture
@@ -58,9 +56,7 @@ def test_parse_each_batch1_file(name: str, content_dir: Path) -> None:
     # Body must start with the H1 (`# KBank WISDOM ...`).
     assert review.body.lstrip().startswith("#"), f"{name} body missing H1"
     # Thai characters present — catches any accidental latin-only stub.
-    assert any("฀" <= ch <= "๿" for ch in review.body), (
-        f"{name} body has no Thai characters"
-    )
+    assert any("฀" <= ch <= "๿" for ch in review.body), f"{name} body has no Thai characters"
 
 
 def test_parse_slug_matches_filename(content_dir: Path) -> None:
@@ -143,9 +139,7 @@ async def test_seed_inserts_five_cards_with_articles(app: object, content_dir: P
 
         # Valuations — exactly the three configured currencies.
         valuations = (await session.scalars(select(PointValuation))).all()
-        currency_by_id = {
-            c.id: c for c in (await session.scalars(select(LoyaltyCurrency))).all()
-        }
+        currency_by_id = {c.id: c for c in (await session.scalars(select(LoyaltyCurrency))).all()}
         codes = {currency_by_id[v.currency_id].code for v in valuations}
         assert {"ROP", "K_POINT", "UOB_REWARDS"}.issubset(codes)
 
@@ -181,9 +175,7 @@ async def test_seed_is_idempotent(app: object, content_dir: Path) -> None:
     assert second.currencies_inserted == 0
 
 
-async def test_seed_creates_membership_rewards_currency(
-    app: object, content_dir: Path
-) -> None:
+async def test_seed_creates_membership_rewards_currency(app: object, content_dir: Path) -> None:
     _ = app
     await _seed_system_user_if_missing()
 

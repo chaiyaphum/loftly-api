@@ -91,9 +91,7 @@ def _extract_json_payload(content: str) -> dict[str, Any]:
             f"Typhoon response was not valid JSON: {exc.msg}"
         ) from exc
     if not isinstance(data, dict):
-        raise TyphoonMalformedOutputError(
-            "Typhoon response was valid JSON but not an object."
-        )
+        raise TyphoonMalformedOutputError("Typhoon response was valid JSON but not an object.")
     return data
 
 
@@ -131,9 +129,7 @@ def _parse_profile(data: dict[str, Any]) -> tuple[SpendProfile, float]:
     try:
         profile = SpendProfile.model_validate(data)
     except Exception as exc:
-        raise TyphoonMalformedOutputError(
-            f"SpendProfile validation failed: {exc}"
-        ) from exc
+        raise TyphoonMalformedOutputError(f"SpendProfile validation failed: {exc}") from exc
     if isinstance(confidence_raw, int | float):
         confidence = max(0.0, min(1.0, float(confidence_raw)))
     else:
@@ -216,9 +212,7 @@ class TyphoonProvider:
             except httpx.HTTPError as exc:
                 last_exc = exc
                 if attempt == 2:
-                    raise TyphoonUnavailableError(
-                        f"Typhoon request failed: {exc}"
-                    ) from exc
+                    raise TyphoonUnavailableError(f"Typhoon request failed: {exc}") from exc
                 continue
             if resp.status_code in _RETRY_STATUSES and attempt == 1:
                 log.warning(
@@ -232,9 +226,7 @@ class TyphoonProvider:
                     f"Typhoon returned HTTP {resp.status_code}: {resp.text[:200]}"
                 )
             return _extract_content_from_response(resp.json())
-        raise TyphoonUnavailableError(
-            f"Typhoon retryable errors exhausted; last_exc={last_exc}"
-        )
+        raise TyphoonUnavailableError(f"Typhoon retryable errors exhausted; last_exc={last_exc}")
 
     async def _post(
         self,

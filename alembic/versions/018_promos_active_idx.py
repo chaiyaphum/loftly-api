@@ -45,8 +45,7 @@ def upgrade() -> None:
             "ON promos (active, valid_until) WHERE active = true"
         )
         op.execute(
-            "CREATE INDEX IF NOT EXISTS idx_promo_card_map_card_id "
-            "ON promo_card_map (card_id)"
+            "CREATE INDEX IF NOT EXISTS idx_promo_card_map_card_id ON promo_card_map (card_id)"
         )
     else:
         # SQLite (tests) — partial indexes supported, but no CONCURRENTLY.

@@ -344,11 +344,7 @@ async def similar_cards(
             details={"slug": slug},
         )
 
-    cand_stmt = (
-        select(CardModel)
-        .where(CardModel.status == "active")
-        .where(CardModel.id != src.id)
-    )
+    cand_stmt = select(CardModel).where(CardModel.status == "active").where(CardModel.id != src.id)
     cand_rows = list((await session.execute(cand_stmt)).scalars().unique().all())
 
     def _score(row: CardModel) -> tuple[int, str]:

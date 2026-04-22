@@ -106,9 +106,7 @@ async def test_archive_session_preserves_ttl(fresh_cache: InMemoryCache) -> None
     await write_session_meta("s1", _meta())
     await archive_session("s1")
 
-    archived_keys = [
-        k for k in fresh_cache._store if k.startswith("selector:session:archived:s1:")
-    ]
+    archived_keys = [k for k in fresh_cache._store if k.startswith("selector:session:archived:s1:")]
     assert archived_keys, "archive should produce exactly one archived key"
     _, expires_at = fresh_cache._store[archived_keys[0]]
     # TTL should be roughly 24h ahead. Allow generous slack so CI timing is stable.

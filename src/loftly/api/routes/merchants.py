@@ -188,9 +188,7 @@ async def search_merchants(
     results: list[MerchantSearchResult] = []
     for m in rows:
         count = await _count_active_promos(session, m.id)
-        display = (
-            m.display_name_th if locale.startswith("th") else m.display_name_en
-        )
+        display = m.display_name_th if locale.startswith("th") else m.display_name_en
         results.append(
             MerchantSearchResult(
                 slug=m.slug,
@@ -236,9 +234,7 @@ async def list_merchants(
     if cached is not None:
         return MerchantListResponse.model_validate(cached)
 
-    stmt = select(MerchantCanonicalModel).where(
-        MerchantCanonicalModel.status == "active"
-    )
+    stmt = select(MerchantCanonicalModel).where(MerchantCanonicalModel.status == "active")
     if category:
         stmt = stmt.where(MerchantCanonicalModel.category_default == category)
     if letter:
@@ -307,9 +303,7 @@ async def get_merchant_page(
 
     merchant = (
         await session.execute(
-            select(MerchantCanonicalModel).where(
-                MerchantCanonicalModel.slug == slug
-            )
+            select(MerchantCanonicalModel).where(MerchantCanonicalModel.slug == slug)
         )
     ).scalar_one_or_none()
     if merchant is None:

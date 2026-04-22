@@ -213,9 +213,7 @@ def http_request_observer(
     concrete URL — otherwise the cardinality explodes. The middleware handles
     that fallback; callers here just pass whatever they got.
     """
-    HTTP_REQUESTS_TOTAL.labels(
-        route=route, method=method, status_code=str(status_code)
-    ).inc()
+    HTTP_REQUESTS_TOTAL.labels(route=route, method=method, status_code=str(status_code)).inc()
     HTTP_REQUEST_DURATION_SECONDS.labels(route=route, method=method).observe(
         max(0.0, duration_seconds)
     )

@@ -71,9 +71,7 @@ async def test_archive_existing_session_returns_true_and_renames_key(
     archived_keys = [
         k for k in cache._store if k.startswith(f"selector:session:archived:{session_id}:")
     ]
-    assert len(archived_keys) == 1, (
-        f"expected exactly one archived key, got {archived_keys}"
-    )
+    assert len(archived_keys) == 1, f"expected exactly one archived key, got {archived_keys}"
 
 
 async def test_archive_nonexistent_session_returns_false(seeded_client: AsyncClient) -> None:

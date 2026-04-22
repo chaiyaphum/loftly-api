@@ -210,9 +210,7 @@ def build_r2_client(
     if endpoint_url is None:
         account = account_id or os.environ.get("CF_ACCOUNT_ID")
         if not account:
-            raise DRConfigError(
-                "CF_ACCOUNT_ID is unset and no explicit endpoint_url provided."
-            )
+            raise DRConfigError("CF_ACCOUNT_ID is unset and no explicit endpoint_url provided.")
         endpoint_url = f"https://{account}.r2.cloudflarestorage.com"
 
     return boto3.client(
@@ -261,6 +259,4 @@ def parse_snapshot_uri(ref: str, *, bucket: str = DEFAULT_BUCKET, env: str) -> t
     # Date shorthand — caller will list & pick.
     if len(ref) == 10 and ref[4] == "-" and ref[7] == "-":
         return bucket, f"{env}/{ref}/"
-    raise DRConfigError(
-        f"snapshot ref {ref!r} must be an s3:// URI or a YYYY-MM-DD date."
-    )
+    raise DRConfigError(f"snapshot ref {ref!r} must be an s3:// URI or a YYYY-MM-DD date.")

@@ -39,9 +39,7 @@ async def test_similar_ranks_same_tier_first(seeded_client: AsyncClient) -> None
 
 
 async def test_similar_respects_limit(seeded_client: AsyncClient) -> None:
-    resp = await seeded_client.get(
-        "/v1/cards/similar/kbank-wisdom", params={"limit": 1}
-    )
+    resp = await seeded_client.get("/v1/cards/similar/kbank-wisdom", params={"limit": 1})
     assert resp.status_code == 200
     assert len(resp.json()["data"]) <= 1
 
@@ -56,7 +54,5 @@ async def test_similar_invalid_slug_returns_404(seeded_client: AsyncClient) -> N
 
 async def test_similar_limit_bounds_validated(seeded_client: AsyncClient) -> None:
     # limit=0 rejected by Query(ge=1).
-    resp = await seeded_client.get(
-        "/v1/cards/similar/kbank-wisdom", params={"limit": 0}
-    )
+    resp = await seeded_client.get("/v1/cards/similar/kbank-wisdom", params={"limit": 0})
     assert resp.status_code == 422

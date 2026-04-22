@@ -84,7 +84,11 @@ async def test_dry_run_reports_without_writing(seeded_db: object) -> None:
     async with sessionmaker() as session:
         count = len(
             list(
-                (await session.execute(select(Promo).where(Promo.external_bank_key == "manual:uob")))
+                (
+                    await session.execute(
+                        select(Promo).where(Promo.external_bank_key == "manual:uob")
+                    )
+                )
                 .scalars()
                 .unique()
                 .all()
@@ -185,11 +189,7 @@ async def test_archival_does_not_touch_deal_harvester_rows(seeded_db: object) ->
     _ = seeded_db
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        bank = (
-            (await session.execute(select(Bank).where(Bank.slug == "uob")))
-            .scalars()
-            .one()
-        )
+        bank = (await session.execute(select(Bank).where(Bank.slug == "uob"))).scalars().one()
         session.add(
             Promo(
                 bank_id=bank.id,
@@ -210,7 +210,11 @@ async def test_archival_does_not_touch_deal_harvester_rows(seeded_db: object) ->
 
     async with sessionmaker() as session:
         harvester = (
-            (await session.execute(select(Promo).where(Promo.external_source_id == "harvester-xyz")))
+            (
+                await session.execute(
+                    select(Promo).where(Promo.external_source_id == "harvester-xyz")
+                )
+            )
             .scalars()
             .one()
         )

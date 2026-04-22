@@ -292,13 +292,7 @@ async def _selector_metrics(session: AsyncSession, as_of: datetime) -> dict[str,
     top1_invocations = 0
     top1_conversions = 0
     # Pre-load card slug → id so we can match output slug against click.card_id.
-    card_rows = list(
-        (
-            await session.execute(
-                select(CardModel.id, CardModel.slug)
-            )
-        ).all()
-    )
+    card_rows = list((await session.execute(select(CardModel.id, CardModel.slug))).all())
     slug_to_card_id: dict[str, uuid.UUID] = {slug: cid for cid, slug in card_rows}
 
     sessions_with_user = list(
@@ -343,9 +337,7 @@ async def _selector_metrics(session: AsyncSession, as_of: datetime) -> dict[str,
         if click_count and int(click_count) > 0:
             top1_conversions += 1
 
-    top1_conv_rate = (
-        float(top1_conversions) / float(top1_invocations) if top1_invocations else 0.0
-    )
+    top1_conv_rate = float(top1_conversions) / float(top1_invocations) if top1_invocations else 0.0
 
     # Eval recall — read from the latest scheduled run persisted as a SyncRun
     # with source='selector_eval'. Fallback: null when harness hasn't logged yet.
@@ -407,9 +399,7 @@ async def _affiliate_metrics(session: AsyncSession, as_of: datetime) -> dict[str
             )
         )
     ).scalar_one()
-    conv_rate = (
-        float(conversions) / float(total_clicks) if total_clicks else 0.0
-    )
+    conv_rate = float(conversions) / float(total_clicks) if total_clicks else 0.0
 
     # Commission THB by month for the last 6 months.
     monthly_commission: list[dict[str, Any]] = []
@@ -539,9 +529,7 @@ async def _content_metrics(session: AsyncSession, as_of: datetime) -> dict[str, 
         review_total += 1
         if isinstance(meta, dict) and meta.get("schema_review_valid") is True:
             review_valid += 1
-    review_validation_rate = (
-        float(review_valid) / float(review_total) if review_total else 0.0
-    )
+    review_validation_rate = float(review_valid) / float(review_total) if review_total else 0.0
 
     return {
         "articles_published": int(published_count or 0),

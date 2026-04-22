@@ -276,8 +276,8 @@ def _compose_personalized(
     )
 
     html = (
-        "<html><body style=\"margin:0;padding:24px;"
-        "font-family:Arial,sans-serif;font-size:15px;color:#222;background:#fafafa\">"
+        '<html><body style="margin:0;padding:24px;'
+        'font-family:Arial,sans-serif;font-size:15px;color:#222;background:#fafafa">'
         '<div style="max-width:560px;margin:0 auto;background:#fff;'
         'padding:24px;border-radius:8px">'
         f'<h1 style="font-size:20px;margin:0 0 16px 0">{header}</h1>'

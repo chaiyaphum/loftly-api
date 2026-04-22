@@ -134,9 +134,7 @@ async def _count_by(action_prefix: str) -> int:
 async def _total_rows() -> int:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        return int(
-            (await session.execute(select(func.count()).select_from(AuditLog))).scalar_one()
-        )
+        return int((await session.execute(select(func.count()).select_from(AuditLog))).scalar_one())
 
 
 @pytest.mark.asyncio
@@ -256,9 +254,7 @@ async def test_admin_preview_endpoint(
         consent_very_old_8y=2,
         other_recent=0,
     )
-    resp = await seeded_client.get(
-        "/v1/admin/jobs/audit-retention/preview", headers=admin_headers
-    )
+    resp = await seeded_client.get("/v1/admin/jobs/audit-retention/preview", headers=admin_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["dry_run"] is True

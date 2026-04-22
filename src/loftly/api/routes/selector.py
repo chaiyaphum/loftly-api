@@ -598,9 +598,7 @@ def _apply_promo_context(
     if snapshot.status != "ok":
         # Degraded / stale — LLM was instructed not to cite. Strip anything
         # that slipped through.
-        stripped_stack = [
-            item.model_copy(update={"cited_promo_ids": []}) for item in result.stack
-        ]
+        stripped_stack = [item.model_copy(update={"cited_promo_ids": []}) for item in result.stack]
         return result.model_copy(
             update={
                 "stack": stripped_stack,
