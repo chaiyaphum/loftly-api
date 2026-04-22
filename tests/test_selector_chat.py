@@ -13,13 +13,6 @@ Covers the 12 scenarios in the PR-9 brief:
 - `selector_chat_opened` fires exactly once per session
 - Cost cap: prompt too large → rejected pre-flight
 - Concurrent calls don't corrupt chat_count
-
-NOTE 2026-04-23: 7 of these tests raise `TypeError: unhashable type: 'dict'`
-because `routes/selector_chat.py::chat` calls `chat_prompt.load(dict)` but
-`selector_chat_followup.load()` takes no args and returns a ChatFollowupPrompt
-(not subscriptable). The route's template-rendering code path is incomplete.
-Skip-marked so CI can gate on the rest of the suite. Remove this block when
-the route is fixed to properly render `system`/`user` from the template.
 """
 
 from __future__ import annotations
@@ -41,10 +34,6 @@ from loftly.selector.session_cache import (
     get_chat_count,
     increment_chat_count,
     write_context,
-)
-
-pytestmark = pytest.mark.skip(
-    reason="pre-existing bug: chat_prompt.load(dict) mismatch — see module docstring 2026-04-23 note"
 )
 
 # ---------------------------------------------------------------------------
