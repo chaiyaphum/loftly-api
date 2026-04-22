@@ -131,10 +131,11 @@ class Settings(BaseSettings):
 
     # POST_V1 §9 Workstream B (ratified 2026-04-22 Q18) — Merchant Reverse
     # Lookup. Gates both the `/v1/merchants/*` read surface and the
-    # `canonicalize_merchants` daily job. Default OFF — staging can flip it
-    # ON once the seeded 50 merchants clear manual QA + the canonicalization
-    # pipeline's LLM step is wired to the Haiku provider.
-    merchants_reverse_lookup_enabled: bool = Field(default=False)
+    # `canonicalize_merchants` daily job. Flipped to default-ON 2026-04-22
+    # (late) so the redesigned `/merchants/*` pages on staging resolve
+    # instead of 405-ing. Env-var override (MERCHANTS_REVERSE_LOOKUP_ENABLED=false)
+    # still honored if we need to kill-switch.
+    merchants_reverse_lookup_enabled: bool = Field(default=True)
 
     @field_validator("affiliate_partner_secrets", mode="before")
     @classmethod
