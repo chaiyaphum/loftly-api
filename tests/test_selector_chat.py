@@ -1,3 +1,4 @@
+# ruff: noqa: F401
 """Tests for POST_V1 §1 `POST /v1/selector/{session_id}/chat`.
 
 Covers the 12 scenarios in the PR-9 brief:
