@@ -2,14 +2,17 @@
 
 Deliberately flat: loftly-web consumes these directly, and we don't want to
 force clients through a second fetch for bank/merchant details on the list
-surface. Fields `raw_data`, `external_checksum`, `last_synced_at`, and other
-upstream/bookkeeping columns are intentionally stripped — see SCHEMA.md §9
-for the full DB shape.
+surface. Fields `raw_data`, `external_checksum`, and other upstream/bookkeeping
+columns are intentionally stripped — see SCHEMA.md §9 for the full DB shape.
+
+The `meta` object is surfaced specifically for loftly-web's `LivePromoStrip`
+on the landing page, which computes freshness buckets (< 1h pulse · 1-24h
+static · 24-72h amber · >72h hide) from `meta.last_synced_at`.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -67,18 +70,35 @@ class PromoListItem(BaseModel):
     card_ids: list[str] = Field(default_factory=list)
 
 
+class PromoListMeta(BaseModel):
+    """Aggregate freshness + coverage stats for the filtered promo set.
+
+    Consumed by `loftly-web`'s `LivePromoStrip` (landing page) to decide
+    whether to render the live snapshot (< 72h) or hide silently. Keep
+    these fields null-safe: a fresh install with no sync history should
+    still return a well-formed `meta` object with `last_synced_at=None`.
+    """
+
+    total: int
+    banks: int
+    merchants: int
+    last_synced_at: datetime | None = None
+
+
 class PromoListResponse(BaseModel):
     items: list[PromoListItem]
     total: int
     page: int
     page_size: int
     pages: int
+    meta: PromoListMeta
 
 
 __all__ = [
     "BankRef",
     "MerchantCanonicalRef",
     "PromoListItem",
+    "PromoListMeta",
     "PromoListResponse",
     "PromoType",
 ]

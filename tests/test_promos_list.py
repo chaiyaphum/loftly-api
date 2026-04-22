@@ -260,6 +260,97 @@ async def test_list_response_shape_matches_contract(
     assert set(item["bank"].keys()) >= {"id", "slug", "name_th"}
 
 
+async def test_list_meta_object_has_live_promo_strip_fields(
+    seeded_client: AsyncClient,
+) -> None:
+    """`meta` must carry total / banks / merchants / last_synced_at.
+
+    Contract consumed by loftly-web's `LivePromoStrip` landing-page component,
+    which computes the freshness bucket (<1h pulse · 1-24h static · 24-72h
+    amber · >72h hide) from `meta.last_synced_at`. Missing or mis-shaped meta
+    → strip hides silently, which breaks the live-intelligence positioning.
+    """
+    now = datetime.now(UTC)
+    await _seed_promos(now)
+
+    resp = await seeded_client.get("/v1/promos?active=true&page_size=1")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert "meta" in body, "response must expose a `meta` object"
+    meta = body["meta"]
+    assert set(meta.keys()) >= {"total", "banks", "merchants", "last_synced_at"}
+
+    # Shape checks.
+    assert isinstance(meta["total"], int)
+    assert isinstance(meta["banks"], int)
+    assert isinstance(meta["merchants"], int)
+    assert isinstance(meta["last_synced_at"], str)
+
+    # Two active seeded promos across two distinct banks (ktc, kbank) with
+    # two distinct merchant_names (Starbucks, Uniqlo).
+    assert meta["total"] == 2
+    assert meta["banks"] == 2
+    assert meta["merchants"] == 2
+
+    # last_synced_at is ISO-8601 and recent.
+    parsed = datetime.fromisoformat(meta["last_synced_at"])
+    assert parsed.tzinfo is not None, "last_synced_at must be timezone-aware"
+    assert abs((now - parsed).total_seconds()) < 60
+
+
+async def test_list_meta_last_synced_at_null_when_no_sync_run(
+    seeded_client: AsyncClient,
+) -> None:
+    """No successful sync_runs row → `last_synced_at: null` (not a stale value).
+
+    LivePromoStrip treats null as "hide" — the API must be honest rather than
+    fabricate a timestamp from the promo rows.
+    """
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        ktc = (await session.execute(select(Bank).where(Bank.slug == "ktc"))).scalar_one()
+        session.add(
+            Promo(
+                bank_id=ktc.id,
+                source_url="https://x",
+                promo_type="cashback",
+                title_th="t",
+                merchant_name="M",
+                active=True,
+                last_synced_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    resp = await seeded_client.get("/v1/promos?active=true")
+    body = resp.json()
+    assert body["meta"]["last_synced_at"] is None
+    # Counts still populate even without a sync_runs row — one active promo,
+    # one bank, one merchant.
+    assert body["meta"]["total"] == 1
+    assert body["meta"]["banks"] == 1
+    assert body["meta"]["merchants"] == 1
+
+
+async def test_list_meta_counts_scoped_to_filters(
+    seeded_client: AsyncClient,
+) -> None:
+    """`meta.banks` / `meta.merchants` reflect the filter set, not the whole DB.
+
+    Guards against a tempting but wrong implementation that computes the
+    counts over ALL active promos regardless of `?bank=`/`?category=`/etc.
+    """
+    await _seed_promos(datetime.now(UTC))
+
+    # Filter to a single bank — meta.banks should collapse to 1.
+    resp = await seeded_client.get("/v1/promos?bank=ktc")
+    meta = resp.json()["meta"]
+    assert meta["banks"] == 1
+    assert meta["merchants"] == 1  # only Starbucks is active+ktc
+    assert meta["total"] == 1
+
+
 async def test_unused_date_value_sort_nulls_last() -> None:
     """Pure unit check on the sort comparator — valid_until NULLs push last.
 
