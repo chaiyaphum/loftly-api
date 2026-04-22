@@ -1,4 +1,3 @@
-# ruff: noqa: F401
 """Tests for POST_V1 §1 `POST /v1/selector/{session_id}/chat`.
 
 Covers the 12 scenarios in the PR-9 brief:
@@ -31,10 +30,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-
-pytestmark = pytest.mark.skip(
-    reason="pre-existing bug: chat_prompt.load(dict) mismatch — see module docstring 2026-04-23 note"
-)
 import pytest_asyncio
 from httpx import AsyncClient
 
@@ -46,6 +41,10 @@ from loftly.selector.session_cache import (
     get_chat_count,
     increment_chat_count,
     write_context,
+)
+
+pytestmark = pytest.mark.skip(
+    reason="pre-existing bug: chat_prompt.load(dict) mismatch — see module docstring 2026-04-23 note"
 )
 
 # ---------------------------------------------------------------------------
