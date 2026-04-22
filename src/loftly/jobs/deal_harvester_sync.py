@@ -51,6 +51,23 @@ _CATEGORY_SLUG_MAP = {
     "online": "online",
 }
 
+# Upstream `discount_type` → Loftly `promos.promo_type` mapping per
+# mvp/SCHEMA.md §9. Unknown / null upstream values stay NULL so the admin CMS
+# can backfill — never default to a made-up enum value, because that would
+# pollute the Selector's promo-filter logic.
+_PROMO_TYPE_MAP: dict[str, str] = {
+    "cashback": "cashback",
+    "percentage": "category_bonus",
+    "discount": "category_bonus",
+    "points": "category_bonus",
+}
+
+
+def _map_promo_type(discount_type: str | None) -> str | None:
+    if not discount_type:
+        return None
+    return _PROMO_TYPE_MAP.get(discount_type.lower())
+
 
 def _slugify(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
@@ -200,7 +217,7 @@ async def _upsert_promo(
         "external_bank_key": str(bank_key),
         "external_checksum": str(checksum) if checksum else None,
         "source_url": upstream.get("source_url") or upstream.get("url") or "",
-        "promo_type": upstream.get("discount_type") or "category_bonus",
+        "promo_type": _map_promo_type(upstream.get("discount_type")),
         "title_th": upstream.get("title") or "",
         "description_th": upstream.get("description"),
         "merchant_name": upstream.get("merchant_name"),

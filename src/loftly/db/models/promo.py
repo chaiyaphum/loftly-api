@@ -55,7 +55,7 @@ class Promo(Base):
     external_bank_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     external_checksum: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
-    promo_type: Mapped[str] = mapped_column(Text, nullable=False)
+    promo_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     title_th: Mapped[str] = mapped_column(Text, nullable=False)
     title_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_th: Mapped[str | None] = mapped_column(Text, nullable=True)

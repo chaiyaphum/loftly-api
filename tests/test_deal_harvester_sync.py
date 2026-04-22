@@ -317,6 +317,105 @@ async def test_sync_last_endpoint_returns_latest(seeded_client: Any, httpx_mock:
     assert body["source"] == "deal_harvester"
 
 
+async def test_sync_maps_promo_type_from_discount_type(
+    seeded_db: object, httpx_mock: HTTPXMock
+) -> None:
+    """Verify discount_type → promo_type mapping per mvp/SCHEMA.md §9."""
+    _ = seeded_db
+    settings = get_settings()
+    base = settings.deal_harvester_base.rstrip("/")
+
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{base}/promotions?is_active=true&page_size=100&page=1",
+        json=_upstream_payload(
+            [
+                {  # cashback → cashback (pass-through)
+                    "id": "map-1",
+                    "bank": "ktc",
+                    "source_id": "map-1",
+                    "source_url": "https://x/1",
+                    "title": "a",
+                    "card_types": [],
+                    "discount_type": "cashback",
+                    "discount_value": "5%",
+                    "is_active": True,
+                    "checksum": "c1",
+                },
+                {  # percentage → category_bonus
+                    "id": "map-2",
+                    "bank": "ktc",
+                    "source_id": "map-2",
+                    "source_url": "https://x/2",
+                    "title": "b",
+                    "card_types": [],
+                    "discount_type": "percentage",
+                    "discount_value": "10%",
+                    "is_active": True,
+                    "checksum": "c2",
+                },
+                {  # discount → category_bonus
+                    "id": "map-3",
+                    "bank": "ktc",
+                    "source_id": "map-3",
+                    "source_url": "https://x/3",
+                    "title": "c",
+                    "card_types": [],
+                    "discount_type": "discount",
+                    "discount_value": "100 baht",
+                    "is_active": True,
+                    "checksum": "c3",
+                },
+                {  # points → category_bonus
+                    "id": "map-4",
+                    "bank": "ktc",
+                    "source_id": "map-4",
+                    "source_url": "https://x/4",
+                    "title": "d",
+                    "card_types": [],
+                    "discount_type": "points",
+                    "discount_value": "2x points",
+                    "is_active": True,
+                    "checksum": "c4",
+                },
+                {  # null discount_type → null (never "category_bonus")
+                    "id": "map-5",
+                    "bank": "ktc",
+                    "source_id": "map-5",
+                    "source_url": "https://x/5",
+                    "title": "e",
+                    "card_types": [],
+                    "discount_type": None,
+                    "discount_value": None,
+                    "is_active": True,
+                    "checksum": "c5",
+                },
+            ]
+        ),
+    )
+    factory = await _client_factory_with_mock(httpx_mock)
+    result = await run_sync(client_factory=factory)
+    assert result["status"] == "success"
+
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        rows = {
+            r.external_source_id: r
+            for r in (
+                (await session.execute(select(Promo).where(Promo.external_bank_key == "ktc")))
+                .scalars()
+                .unique()
+                .all()
+            )
+            if r.external_source_id.startswith("map-")
+        }
+    assert rows["map-1"].promo_type == "cashback"
+    assert rows["map-2"].promo_type == "category_bonus"
+    assert rows["map-3"].promo_type == "category_bonus"
+    assert rows["map-4"].promo_type == "category_bonus"
+    assert rows["map-5"].promo_type is None
+
+
 @pytest.fixture
 def non_mocked_hosts() -> list[str]:
     """Let ASGI test traffic through; only mock deal-harvester."""
