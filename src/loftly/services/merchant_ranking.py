@@ -113,11 +113,11 @@ async def _fetch_merchant_promos(
     - `Promo.valid_until IS NULL OR valid_until >= as_of` (expiry)
     - `Promo.valid_from IS NULL OR valid_from <= as_of` (not-yet-started)
     """
-    valid_until_ok: ColumnElement[bool] = (
-        Promo.valid_until.is_(None) | (Promo.valid_until >= as_of)
+    valid_until_ok: ColumnElement[bool] = Promo.valid_until.is_(None) | (
+        Promo.valid_until >= as_of
     )
-    valid_from_ok: ColumnElement[bool] = (
-        Promo.valid_from.is_(None) | (Promo.valid_from <= as_of)
+    valid_from_ok: ColumnElement[bool] = Promo.valid_from.is_(None) | (
+        Promo.valid_from <= as_of
     )
     stmt = (
         select(Promo)
@@ -238,7 +238,9 @@ async def rank_cards_for_merchant(
     effective_date = as_of or date.today()
 
     merchant = (
-        await session.execute(select(MerchantCanonical).where(MerchantCanonical.id == merchant_id))
+        await session.execute(
+            select(MerchantCanonical).where(MerchantCanonical.id == merchant_id)
+        )
     ).scalar_one_or_none()
     if merchant is None or merchant.status != "active":
         log.info(
@@ -258,9 +260,7 @@ async def rank_cards_for_merchant(
     cards = list((await session.execute(cards_stmt)).scalars().unique().all())
 
     valuations = await _fetch_valuations(session)
-    promos = await _fetch_merchant_promos(
-        session, merchant_id, as_of=effective_date
-    )
+    promos = await _fetch_merchant_promos(session, merchant_id, as_of=effective_date)
 
     # Pre-compute user-owned set once — avoids O(N·M) membership checks in
     # the ranking loop when the wallet is large.
@@ -295,17 +295,6 @@ async def rank_cards_for_merchant(
         for promo in applicable:
             # Surface every promo that applies — even if it doesn't move
             # the headline — so the user sees the full set of active deals.
-<<<<<<< Updated upstream
-            applicable_summaries.append(
-                PromoSummary(
-                    id=str(promo.id),
-                    title_th=promo.title_th,
-                    title_en=promo.title_en,
-                    discount_value=promo.discount_value,
-                    valid_until=(promo.valid_until.isoformat() if promo.valid_until else None),
-                )
-            )
-=======
             applicable_summaries.append(_promo_summary(promo))
 
             # Category guard: `category_bonus` with NULL / mismatched category
@@ -313,7 +302,6 @@ async def rank_cards_for_merchant(
             if not _promo_applies_to_category(promo, merchant_category):
                 applied_rules.append(f"category_mismatch:{promo.id}")
                 continue
->>>>>>> Stashed changes
 
             # Minimum spend filter — don't let a "THB 5,000 minimum" promo
             # inflate the "earn per THB 1,000" headline.
@@ -367,9 +355,7 @@ async def rank_cards_for_merchant(
     #   1. est_value_per_1000_thb DESC (headline)
     #   2. confidence DESC (prefer well-known valuations on ties)
     #   3. card_slug ASC (stable alphabetical fallback)
-    ranked.sort(
-        key=lambda r: (-r.est_value_per_1000_thb, -r.confidence, r.card_slug)
-    )
+    ranked.sort(key=lambda r: (-r.est_value_per_1000_thb, -r.confidence, r.card_slug))
 
     log.info(
         "merchant_ranking_computed",
