@@ -222,9 +222,7 @@ async def test_csv_export_rejects_non_admin(
     seeded_client: AsyncClient,
     user_headers: dict[str, str],
 ) -> None:
-    resp = await seeded_client.get(
-        "/v1/admin/affiliate/stats.csv", headers=user_headers
-    )
+    resp = await seeded_client.get("/v1/admin/affiliate/stats.csv", headers=user_headers)
     assert resp.status_code == 403
 
 
@@ -238,9 +236,7 @@ async def test_csv_export_accepts_token_query_param(
     """
     _ = csv_seeded
     bearer = admin_headers["Authorization"].split(" ", 1)[1]
-    resp = await seeded_client.get(
-        "/v1/admin/affiliate/stats.csv", params={"token": bearer}
-    )
+    resp = await seeded_client.get("/v1/admin/affiliate/stats.csv", params={"token": bearer})
     assert resp.status_code == 200, resp.text
     header, rows = _parse_csv(resp.text)
     assert header == _EXPECTED_COLUMNS
@@ -263,9 +259,7 @@ async def test_csv_export_empty_when_no_data(
     seeded_client: AsyncClient,
     admin_headers: dict[str, str],
 ) -> None:
-    resp = await seeded_client.get(
-        "/v1/admin/affiliate/stats.csv", headers=admin_headers
-    )
+    resp = await seeded_client.get("/v1/admin/affiliate/stats.csv", headers=admin_headers)
     assert resp.status_code == 200
     header, rows = _parse_csv(resp.text)
     assert header == _EXPECTED_COLUMNS

@@ -103,9 +103,7 @@ def _normalize(name: str) -> str:
     return text
 
 
-def _exact_match(
-    normalized: str, canonicals: list[MerchantCanonical]
-) -> MerchantCanonical | None:
+def _exact_match(normalized: str, canonicals: list[MerchantCanonical]) -> MerchantCanonical | None:
     """Step 2 — exact hit against slug or any `alt_names` entry (normalized)."""
     if not normalized:
         return None
@@ -171,11 +169,7 @@ async def _unmapped_promos(session: AsyncSession) -> list[Promo]:
     mapped_stmt = select(PromoMerchantCanonicalMap.promo_id)
     mapped_ids = set((await session.execute(mapped_stmt)).scalars().all())
 
-    stmt = (
-        select(Promo)
-        .where(Promo.active.is_(True))
-        .where(Promo.merchant_name.is_not(None))
-    )
+    stmt = select(Promo).where(Promo.active.is_(True)).where(Promo.merchant_name.is_not(None))
     rows = list((await session.execute(stmt)).scalars().unique().all())
     return [p for p in rows if p.id not in mapped_ids]
 
@@ -512,9 +506,7 @@ async def run_canonicalization(
 
     try:
         async with sm() as session:
-            canonicals = list(
-                (await session.execute(select(MerchantCanonical))).scalars().all()
-            )
+            canonicals = list((await session.execute(select(MerchantCanonical))).scalars().all())
             unmapped = await _unmapped_promos(session)
             counters["candidates"] = len(unmapped)
 
@@ -603,9 +595,7 @@ async def run_canonicalization(
 
     async with sm() as session:
         run = (
-            (await session.execute(select(SyncRun).where(SyncRun.id == run_row_id)))
-            .scalars()
-            .one()
+            (await session.execute(select(SyncRun).where(SyncRun.id == run_row_id))).scalars().one()
         )
         run.status = status
         run.finished_at = datetime.now(UTC)

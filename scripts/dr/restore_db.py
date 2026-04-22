@@ -54,11 +54,11 @@ log = logging.getLogger("loftly.dr.restore")
 #: founder would rather the guard fires on a false positive than silently
 #: restores over production data.
 _PROD_HOST_PATTERN = re.compile(
-    r"(^|[@/.-])"                 # boundary
-    r"(loftly-(api-)?prod"        # loftly-prod, loftly-api-prod
-    r"|loftly-postgres-prod"      # naming we've used in fly.toml
-    r"|prod\.loftly"              # prod.loftly.co.th
-    r"|[\w-]*-prod\.)"            # anything ending -prod.
+    r"(^|[@/.-])"  # boundary
+    r"(loftly-(api-)?prod"  # loftly-prod, loftly-api-prod
+    r"|loftly-postgres-prod"  # naming we've used in fly.toml
+    r"|prod\.loftly"  # prod.loftly.co.th
+    r"|[\w-]*-prod\.)"  # anything ending -prod.
 )
 
 #: Row-count drift tolerance for the post-restore verification. A little
@@ -195,15 +195,11 @@ async def run(
 
         s3 = build_r2_client()
 
-    bucket_from_ref, key_or_prefix = parse_snapshot_uri(
-        snapshot_ref, bucket=bucket, env=env
-    )
+    bucket_from_ref, key_or_prefix = parse_snapshot_uri(snapshot_ref, bucket=bucket, env=env)
     effective_bucket = bucket_from_ref or bucket
 
     if key_or_prefix.endswith("/"):
-        dump_key = resolve_latest_in_prefix(
-            s3, bucket=effective_bucket, prefix=key_or_prefix
-        )
+        dump_key = resolve_latest_in_prefix(s3, bucket=effective_bucket, prefix=key_or_prefix)
     else:
         dump_key = key_or_prefix
 

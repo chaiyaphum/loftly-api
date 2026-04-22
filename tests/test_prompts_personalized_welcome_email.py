@@ -59,9 +59,7 @@ def test_load_returns_pinned_version() -> None:
 @pytest.mark.parametrize("placeholder", REQUIRED_PLACEHOLDERS)
 def test_text_contains_required_placeholder(placeholder: str) -> None:
     prompt = load()
-    assert placeholder in prompt.text, (
-        f"prompt must include runtime placeholder {placeholder!r}"
-    )
+    assert placeholder in prompt.text, f"prompt must include runtime placeholder {placeholder!r}"
 
 
 def test_text_has_system_section() -> None:
@@ -92,9 +90,7 @@ def _scrubbed_text(raw: str) -> str:
 def test_text_has_no_banned_phrase(phrase: str) -> None:
     prompt = load()
     scrubbed = _scrubbed_text(prompt.text)
-    assert phrase.lower() not in scrubbed, (
-        f"prompt body must not contain banned phrase {phrase!r}"
-    )
+    assert phrase.lower() not in scrubbed, f"prompt body must not contain banned phrase {phrase!r}"
 
 
 def test_banned_phrases_block_is_present() -> None:

@@ -112,9 +112,7 @@ async def _fetch_merchant(merchant_id: uuid.UUID) -> MerchantCanonicalModel | No
     async with sessionmaker() as session:
         return (
             await session.execute(
-                select(MerchantCanonicalModel).where(
-                    MerchantCanonicalModel.id == merchant_id
-                )
+                select(MerchantCanonicalModel).where(MerchantCanonicalModel.id == merchant_id)
             )
         ).scalar_one_or_none()
 
@@ -123,11 +121,7 @@ async def _count_audit(action: str) -> int:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         rows = list(
-            (
-                await session.execute(
-                    select(AuditLog).where(AuditLog.action == action)
-                )
-            )
+            (await session.execute(select(AuditLog).where(AuditLog.action == action)))
             .scalars()
             .all()
         )
@@ -377,9 +371,7 @@ async def test_mapping_queue_lists_only_unreviewed(
     await _insert_mapping(promo_id=pid_open, merchant_id=m_id, confidence=0.9)
     await _insert_mapping(promo_id=pid_done, merchant_id=m_id, confidence=0.9, reviewed=True)
 
-    resp = await seeded_client.get(
-        "/v1/admin/merchants/mapping-queue", headers=admin_headers
-    )
+    resp = await seeded_client.get("/v1/admin/merchants/mapping-queue", headers=admin_headers)
     assert resp.status_code == 200
     body = resp.json()
     ids = {item["promo_id"] for item in body["data"]}
@@ -405,9 +397,7 @@ async def test_mapping_queue_sorts_by_confidence_asc(
         )
         promo_ids.append(pid)
 
-    resp = await seeded_client.get(
-        "/v1/admin/merchants/mapping-queue", headers=admin_headers
-    )
+    resp = await seeded_client.get("/v1/admin/merchants/mapping-queue", headers=admin_headers)
     body = resp.json()
     returned = [item for item in body["data"] if item["promo_id"] in {str(p) for p in promo_ids}]
     returned_conf = [row["confidence"] for row in returned]
@@ -422,9 +412,7 @@ async def test_mapping_queue_filter_by_method(
     p_llm = await _insert_promo("llm-x")
     p_exact = await _insert_promo("exact-x")
     await _insert_mapping(promo_id=p_llm, merchant_id=m_id, confidence=0.7, method="llm")
-    await _insert_mapping(
-        promo_id=p_exact, merchant_id=m_id, confidence=0.99, method="exact"
-    )
+    await _insert_mapping(promo_id=p_exact, merchant_id=m_id, confidence=0.99, method="exact")
 
     resp = await seeded_client.get(
         "/v1/admin/merchants/mapping-queue?method=llm", headers=admin_headers
@@ -463,9 +451,7 @@ async def test_mapping_queue_review_reject_rewrites_mapping(
     src_merchant = await _insert_merchant(slug="wrong")
     correct_merchant = await _insert_merchant(slug="correct")
     pid = await _insert_promo("ambiguous")
-    await _insert_mapping(
-        promo_id=pid, merchant_id=src_merchant, confidence=0.65, method="fuzzy"
-    )
+    await _insert_mapping(promo_id=pid, merchant_id=src_merchant, confidence=0.65, method="fuzzy")
 
     resp = await seeded_client.post(
         f"/v1/admin/merchants/mapping-queue/{pid}/review",

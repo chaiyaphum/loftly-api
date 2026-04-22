@@ -182,9 +182,7 @@ def _row_matches_payload(row: Promo, payload: dict[str, Any]) -> bool:
 
 async def _load_bank(session: AsyncSession, bank_slug: str) -> Bank:
     bank = (
-        (await session.execute(select(Bank).where(Bank.slug == bank_slug)))
-        .scalars()
-        .one_or_none()
+        (await session.execute(select(Bank).where(Bank.slug == bank_slug))).scalars().one_or_none()
     )
     if bank is None:
         raise ValueError(f"bank_slug {bank_slug!r} not found in banks table")

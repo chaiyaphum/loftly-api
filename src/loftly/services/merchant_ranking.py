@@ -153,9 +153,7 @@ async def rank_cards_for_merchant(
         active catalog rows.
     """
     merchant = (
-        await session.execute(
-            select(MerchantCanonical).where(MerchantCanonical.id == merchant_id)
-        )
+        await session.execute(select(MerchantCanonical).where(MerchantCanonical.id == merchant_id))
     ).scalar_one_or_none()
     if merchant is None or merchant.status != "active":
         return []
@@ -202,9 +200,7 @@ async def rank_cards_for_merchant(
                     title_th=promo.title_th,
                     title_en=promo.title_en,
                     discount_value=promo.discount_value,
-                    valid_until=(
-                        promo.valid_until.isoformat() if promo.valid_until else None
-                    ),
+                    valid_until=(promo.valid_until.isoformat() if promo.valid_until else None),
                 )
             )
 
@@ -220,9 +216,7 @@ async def rank_cards_for_merchant(
             uplift = _promo_uplift_multiplier(promo, base_rate)
             if uplift > 0:
                 uplift_total += uplift
-                applied_rules.append(
-                    f"promo_uplift:{promo.id}:{round(uplift, 4)}"
-                )
+                applied_rules.append(f"promo_uplift:{promo.id}:{round(uplift, 4)}")
 
         # Stacking cap — keep the headline believable.
         cap = _STACK_CAP_MULTIPLIER * max(base_rate, 1.0)

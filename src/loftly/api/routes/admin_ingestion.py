@@ -89,7 +89,9 @@ async def ingestion_coverage(
                     manual_prefix_expr.label("prefix"),
                     func.count(Promo.id).label("n"),
                     func.max(Promo.last_synced_at).label("last_synced_at"),
-                ).where(Promo.active.is_(True)).group_by(Promo.bank_id, "prefix")
+                )
+                .where(Promo.active.is_(True))
+                .group_by(Promo.bank_id, "prefix")
             )
         ).all()
     )
@@ -97,9 +99,7 @@ async def ingestion_coverage(
     # bank_id -> {"manual": n, "harvester": n, "last": datetime}
     agg: dict[uuid.UUID, dict[str, Any]] = {}
     for bank_id, prefix, count, last in rows:
-        bucket = agg.setdefault(
-            bank_id, {"manual": 0, "harvester": 0, "last": None}
-        )
+        bucket = agg.setdefault(bank_id, {"manual": 0, "harvester": 0, "last": None})
         if prefix == "manual:":
             bucket["manual"] += int(count)
         else:
@@ -140,18 +140,14 @@ async def ingestion_coverage(
             await session.execute(
                 select(func.count(Promo.id))
                 .select_from(
-                    Promo.__table__.outerjoin(
-                        promo_card_map, Promo.id == promo_card_map.c.promo_id
-                    )
+                    Promo.__table__.outerjoin(promo_card_map, Promo.id == promo_card_map.c.promo_id)
                 )
                 .where(Promo.active.is_(True), promo_card_map.c.card_id.is_(None))
             )
         ).scalar_one()
     )
 
-    overall_pct = (
-        round((full_or_partial / len(banks)) * 100.0, 1) if banks else 0.0
-    )
+    overall_pct = round((full_or_partial / len(banks)) * 100.0, 1) if banks else 0.0
 
     return {
         "banks": banks_payload,
@@ -178,9 +174,7 @@ async def resync_bank(
       counts down to the caller's bank).
     """
     bank = (
-        (await session.execute(select(Bank).where(Bank.slug == bank_slug)))
-        .scalars()
-        .one_or_none()
+        (await session.execute(select(Bank).where(Bank.slug == bank_slug))).scalars().one_or_none()
     )
     if bank is None:
         raise LoftlyError(

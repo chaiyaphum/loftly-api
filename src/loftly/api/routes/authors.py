@@ -40,9 +40,7 @@ async def get_author(
 
     Uses the unique `authors.slug` index (see migration 017) for the lookup.
     """
-    row = (
-        await session.execute(select(Author).where(Author.slug == slug))
-    ).scalar_one_or_none()
+    row = (await session.execute(select(Author).where(Author.slug == slug))).scalar_one_or_none()
     if row is None:
         raise LoftlyError(
             status_code=status.HTTP_404_NOT_FOUND,

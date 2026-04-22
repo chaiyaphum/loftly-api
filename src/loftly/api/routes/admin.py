@@ -2398,9 +2398,11 @@ async def merchant_mapping_queue(
         PromoMerchantCanonicalMap.mapped_at.desc(),
     )
 
-    count_stmt = select(func.count()).select_from(
-        PromoMerchantCanonicalMap
-    ).where(PromoMerchantCanonicalMap.reviewed_at.is_(None))
+    count_stmt = (
+        select(func.count())
+        .select_from(PromoMerchantCanonicalMap)
+        .where(PromoMerchantCanonicalMap.reviewed_at.is_(None))
+    )
     if method is not None:
         count_stmt = count_stmt.where(PromoMerchantCanonicalMap.method == method)
     total = int((await session.execute(count_stmt)).scalar_one())
@@ -2466,9 +2468,7 @@ async def review_merchant_mapping(
 
     mapping = (
         await session.execute(
-            select(PromoMerchantCanonicalMap).where(
-                PromoMerchantCanonicalMap.promo_id == promo_id
-            )
+            select(PromoMerchantCanonicalMap).where(PromoMerchantCanonicalMap.promo_id == promo_id)
         )
     ).scalar_one_or_none()
     if mapping is None:
@@ -2492,9 +2492,7 @@ async def review_merchant_mapping(
             ) from exc
         target = (
             await session.execute(
-                select(MerchantCanonicalModel).where(
-                    MerchantCanonicalModel.id == new_target_id
-                )
+                select(MerchantCanonicalModel).where(MerchantCanonicalModel.id == new_target_id)
             )
         ).scalar_one_or_none()
         if target is None or target.status != "active":

@@ -215,9 +215,7 @@ def _render_email_body(
     now: datetime,
 ) -> tuple[str, str]:
     """Return ``(subject, body)`` for the anomaly alert. Thai-primary."""
-    subject = (
-        f"[Loftly] LLM cost anomaly — hourly spend {ratio:.1f}× trailing 24h mean"
-    )
+    subject = f"[Loftly] LLM cost anomaly — hourly spend {ratio:.1f}× trailing 24h mean"
     lines: list[str] = []
     # --- Thai block ---
     lines.append("สวัสดีค่ะ")

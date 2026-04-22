@@ -54,9 +54,7 @@ async def test_me_invalid_token_returns_401(seeded_db: object) -> None:
 
     transport = ASGITransport(app=seeded_db)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get(
-            "/v1/me", headers={"Authorization": "Bearer not-a-real-jwt"}
-        )
+        resp = await client.get("/v1/me", headers={"Authorization": "Bearer not-a-real-jwt"})
     assert resp.status_code == 401
 
 
@@ -109,9 +107,7 @@ async def test_me_last_login_populated_after_magic_link_consume(
     sessionmaker = get_sessionmaker()
     stamped = datetime.now(UTC)
     async with sessionmaker() as session:
-        user = (
-            await session.execute(select(User).where(User.id == TEST_USER_ID))
-        ).scalars().one()
+        user = (await session.execute(select(User).where(User.id == TEST_USER_ID))).scalars().one()
         user.last_login_at = stamped
         await session.commit()
 
@@ -133,9 +129,7 @@ async def test_me_locale_reflects_preferred_locale(
     """Default is 'th'; flipping the column to 'en' is echoed back."""
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        user = (
-            await session.execute(select(User).where(User.id == TEST_USER_ID))
-        ).scalars().one()
+        user = (await session.execute(select(User).where(User.id == TEST_USER_ID))).scalars().one()
         user.preferred_locale = "en"
         await session.commit()
 
@@ -157,9 +151,7 @@ async def test_me_magic_link_user_is_verified(
     # the `get_current_user_id` override from conftest relevant.
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        user = (
-            await session.execute(select(User).where(User.id == TEST_USER_ID))
-        ).scalars().one()
+        user = (await session.execute(select(User).where(User.id == TEST_USER_ID))).scalars().one()
         user.oauth_provider = "email_magic"
         await session.commit()
 
@@ -176,9 +168,7 @@ async def test_me_deleted_user_returns_404(
     """Token valid but user soft-deleted -> 404 (client should drop tokens)."""
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        user = (
-            await session.execute(select(User).where(User.id == TEST_USER_ID))
-        ).scalars().one()
+        user = (await session.execute(select(User).where(User.id == TEST_USER_ID))).scalars().one()
         user.deleted_at = datetime.now(UTC)
         await session.commit()
 

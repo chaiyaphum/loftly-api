@@ -292,9 +292,7 @@ def test_list_snapshots_parses_date_order(moto_s3: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_snapshot_run_end_to_end(
-    moto_s3: Any, enc_key_env: bytes, tmp_path: Path
-) -> None:
+def test_snapshot_run_end_to_end(moto_s3: Any, enc_key_env: bytes, tmp_path: Path) -> None:
     """Verify the snapshot script writes an encrypted object + manifest we can parse."""
     from scripts.dr import snapshot_db
 
@@ -309,7 +307,9 @@ def test_snapshot_run_end_to_end(
 
     # Override DEFAULT_BUCKET used by helpers.
     now = datetime(2026, 4, 21, 4, 30, 0, tzinfo=UTC)
-    with patch("scripts.dr.snapshot_db.build_object_key", return_value=build_object_key("staging", now=now)):
+    with patch(
+        "scripts.dr.snapshot_db.build_object_key", return_value=build_object_key("staging", now=now)
+    ):
         object_key, manifest_key = asyncio.run(
             snapshot_db.run(
                 database_url="postgresql://ignored",

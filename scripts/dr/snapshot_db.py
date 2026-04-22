@@ -252,9 +252,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 1
 
     try:
-        asyncio.run(
-            run(database_url=args.database_url, env=args.env, bucket=args.bucket)
-        )
+        asyncio.run(run(database_url=args.database_url, env=args.env, bucket=args.bucket))
     except DRError as exc:
         log.error("snapshot_failed", extra={"error": str(exc)})
         print(f"snapshot failed: {exc}", file=sys.stderr)

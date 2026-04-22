@@ -57,9 +57,7 @@ class SpendProfile(BaseModel):
             raise ValueError("spend_categories must not be empty.")
         for key, value in v.items():
             if value < 0.0 or value > 1.0:
-                raise ValueError(
-                    f"spend_categories[{key}] must be in [0.0, 1.0]; got {value}."
-                )
+                raise ValueError(f"spend_categories[{key}] must be in [0.0, 1.0]; got {value}.")
         total = sum(v.values())
         if abs(total - 1.0) > _FRACTION_SUM_TOLERANCE:
             raise ValueError(

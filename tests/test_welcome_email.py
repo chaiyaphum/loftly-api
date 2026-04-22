@@ -53,9 +53,7 @@ def _mk_selector_result(card_count: int = 3) -> SelectorResult:
         session_id="00000000-0000-4000-8000-000000000042",
         stack=stack,
         total_monthly_earning_points=sum(it.monthly_earning_points for it in stack),
-        total_monthly_earning_thb_equivalent=sum(
-            it.monthly_earning_thb_equivalent for it in stack
-        ),
+        total_monthly_earning_thb_equivalent=sum(it.monthly_earning_thb_equivalent for it in stack),
         valuation_confidence=0.72,
         rationale_th="สรุปเหตุผลรวม",
         rationale_en="overall rationale",

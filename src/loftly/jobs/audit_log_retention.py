@@ -198,9 +198,7 @@ class RetentionResult:
 
 async def _count_matching(session: AsyncSession, policy: BucketPolicy, cutoff: datetime) -> int:
     stmt = (
-        select(func.count())
-        .select_from(AuditLog)
-        .where(policy.match, AuditLog.created_at < cutoff)
+        select(func.count()).select_from(AuditLog).where(policy.match, AuditLog.created_at < cutoff)
     )
     return int((await session.execute(stmt)).scalar_one())
 

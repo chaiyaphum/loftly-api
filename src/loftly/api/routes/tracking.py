@@ -40,8 +40,7 @@ log = get_logger(__name__)
 
 # 1x1 transparent GIF89a — 43 bytes, universally accepted by email clients.
 _PIXEL_GIF = bytes.fromhex(
-    "47494638396101000100800000ffffff00000021f90401000000002c00000000"
-    "0100010000020144003b"
+    "47494638396101000100800000ffffff00000021f90401000000002c000000000100010000020144003b"
 )
 _GIF_HEADERS = {
     "Content-Type": "image/gif",

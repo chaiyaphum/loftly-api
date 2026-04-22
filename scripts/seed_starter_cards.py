@@ -637,9 +637,7 @@ async def seed_starter_cards(
     await session.flush()
 
     bank_by_slug = {b.slug: b for b in (await session.scalars(select(Bank))).all()}
-    currency_by_code = {
-        c.code: c for c in (await session.scalars(select(LoyaltyCurrency))).all()
-    }
+    currency_by_code = {c.code: c for c in (await session.scalars(select(LoyaltyCurrency))).all()}
 
     for review in reviews:
         card, inserted = await _upsert_card(

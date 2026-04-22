@@ -82,9 +82,7 @@ def _fake_response(status_code: int) -> httpx.Response:
 
 
 def _sonnet_503() -> anthropic.InternalServerError:
-    return anthropic.InternalServerError(
-        "upstream 503", response=_fake_response(503), body=None
-    )
+    return anthropic.InternalServerError("upstream 503", response=_fake_response(503), body=None)
 
 
 def _sonnet_429() -> anthropic.RateLimitError:

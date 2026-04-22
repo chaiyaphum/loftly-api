@@ -137,12 +137,16 @@ async def test_exact_match_no_llm_needed(seeded_db: object) -> None:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         row = (
-            await session.execute(
-                select(PromoMerchantCanonicalMap).where(
-                    PromoMerchantCanonicalMap.promo_id == promo_id
+            (
+                await session.execute(
+                    select(PromoMerchantCanonicalMap).where(
+                        PromoMerchantCanonicalMap.promo_id == promo_id
+                    )
                 )
             )
-        ).scalars().one()
+            .scalars()
+            .one()
+        )
         assert row.merchant_canonical_id == starbucks_id
         assert row.method == "exact"
         assert float(row.confidence) == 1.0
@@ -166,12 +170,16 @@ async def test_exact_match_via_alt_names_thai(seeded_db: object) -> None:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         row = (
-            await session.execute(
-                select(PromoMerchantCanonicalMap).where(
-                    PromoMerchantCanonicalMap.promo_id == promo_id
+            (
+                await session.execute(
+                    select(PromoMerchantCanonicalMap).where(
+                        PromoMerchantCanonicalMap.promo_id == promo_id
+                    )
                 )
             )
-        ).scalars().one()
+            .scalars()
+            .one()
+        )
         assert row.merchant_canonical_id == starbucks_id
         assert row.method == "exact"
 
@@ -201,9 +209,7 @@ async def test_stub_mode_skips_llm_when_no_key(seeded_db: object) -> None:
     assert result["review_queue"] >= 1
 
 
-async def test_llm_match_happy_path(
-    seeded_db: object, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_llm_match_happy_path(seeded_db: object, monkeypatch: pytest.MonkeyPatch) -> None:
     """With key + mocked SDK, a match decision writes method='llm'."""
     _ = seeded_db
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake-real-key")
@@ -222,8 +228,11 @@ async def test_llm_match_happy_path(
     promo_id = await _insert_promo("!!@@ XStarbukx Q Caffe")
 
     llm_json = (
-        '{"results":[{"promo_id":"' + str(promo_id) + '","action":"match","merchant_id":"'
-        + str(starbucks_id) + '","proposed":null,"top_candidates":null,"confidence":0.92,'
+        '{"results":[{"promo_id":"'
+        + str(promo_id)
+        + '","action":"match","merchant_id":"'
+        + str(starbucks_id)
+        + '","proposed":null,"top_candidates":null,"confidence":0.92,'
         '"reasoning_th":"transliteration ของ Starbucks"}]}'
     )
     _patch_anthropic(monkeypatch, [_mock_anthropic_text_response(llm_json)])
@@ -234,22 +243,22 @@ async def test_llm_match_happy_path(
     # in exact/fuzzy OR llm_matched — assert it mapped via _some_ method
     # without falling into the failed bucket.
     assert result["failed"] == 0
-    total_mapped = (
-        result["exact_matched"]
-        + result["fuzzy_matched"]
-        + result["llm_matched"]
-    )
+    total_mapped = result["exact_matched"] + result["fuzzy_matched"] + result["llm_matched"]
     assert total_mapped == 1
 
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         row = (
-            await session.execute(
-                select(PromoMerchantCanonicalMap).where(
-                    PromoMerchantCanonicalMap.promo_id == promo_id
+            (
+                await session.execute(
+                    select(PromoMerchantCanonicalMap).where(
+                        PromoMerchantCanonicalMap.promo_id == promo_id
+                    )
                 )
             )
-        ).scalars().one()
+            .scalars()
+            .one()
+        )
         assert row.merchant_canonical_id == starbucks_id
 
 
@@ -279,20 +288,28 @@ async def test_llm_new_creates_canonical(
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         canonical = (
-            await session.execute(
-                select(MerchantCanonical).where(MerchantCanonical.slug == "brand-new-boba")
+            (
+                await session.execute(
+                    select(MerchantCanonical).where(MerchantCanonical.slug == "brand-new-boba")
+                )
             )
-        ).scalars().one()
+            .scalars()
+            .one()
+        )
         assert canonical.display_name_en == "Brand New Boba"
         assert canonical.merchant_type == "fnb"
 
         row = (
-            await session.execute(
-                select(PromoMerchantCanonicalMap).where(
-                    PromoMerchantCanonicalMap.promo_id == promo_id
+            (
+                await session.execute(
+                    select(PromoMerchantCanonicalMap).where(
+                        PromoMerchantCanonicalMap.promo_id == promo_id
+                    )
                 )
             )
-        ).scalars().one()
+            .scalars()
+            .one()
+        )
         assert row.merchant_canonical_id == canonical.id
         assert row.method == "llm"
         assert row.reviewed_at is None
@@ -322,7 +339,8 @@ async def test_llm_uncertain_keeps_reviewed_at_null(
 
     llm_json = (
         '{"results":[{"promo_id":"' + str(promo_id) + '","action":"uncertain","merchant_id":null,'
-        '"proposed":null,"top_candidates":[{"merchant_id":"' + str(dept_id)
+        '"proposed":null,"top_candidates":[{"merchant_id":"'
+        + str(dept_id)
         + '","confidence":0.55}],"confidence":0.55,'
         '"reasoning_th":"Central กำกวม ต้องรีวิว"}]}'
     )
@@ -335,12 +353,16 @@ async def test_llm_uncertain_keeps_reviewed_at_null(
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         row = (
-            await session.execute(
-                select(PromoMerchantCanonicalMap).where(
-                    PromoMerchantCanonicalMap.promo_id == promo_id
+            (
+                await session.execute(
+                    select(PromoMerchantCanonicalMap).where(
+                        PromoMerchantCanonicalMap.promo_id == promo_id
+                    )
                 )
             )
-        ).scalars().one()
+            .scalars()
+            .one()
+        )
         assert row.merchant_canonical_id == dept_id
         assert row.reviewed_at is None
         assert float(row.confidence) < 0.80
@@ -424,13 +446,17 @@ async def test_sync_run_row_records_counts(seeded_db: object) -> None:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         run = (
-            await session.execute(
-                select(SyncRun)
-                .where(SyncRun.source == "merchant_canonicalizer")
-                .order_by(SyncRun.started_at.desc())
-                .limit(1)
+            (
+                await session.execute(
+                    select(SyncRun)
+                    .where(SyncRun.source == "merchant_canonicalizer")
+                    .order_by(SyncRun.started_at.desc())
+                    .limit(1)
+                )
             )
-        ).scalars().one()
+            .scalars()
+            .one()
+        )
         assert run.status == "success"
         assert run.upstream_count == 1  # candidates
         assert run.inserted_count == 1  # exact match written

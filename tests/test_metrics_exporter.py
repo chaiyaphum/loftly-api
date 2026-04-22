@@ -189,14 +189,10 @@ async def test_http_requests_total_increments_on_200(client: AsyncClient) -> Non
 async def test_http_request_duration_histogram_observed(client: AsyncClient) -> None:
     await client.get("/healthz")
     scrape = await client.get("/metrics")
-    parsed = _metric_by_name(
-        scrape.text, "loftly_api_http_request_duration_seconds"
-    )
+    parsed = _metric_by_name(scrape.text, "loftly_api_http_request_duration_seconds")
     # The `_count` sample is keyed like "<name>_count|method=GET|route=/healthz".
     count_keys = [
-        k
-        for k, v in parsed.items()
-        if "_count|" in k and "route=/healthz" in k and v > 0
+        k for k, v in parsed.items() if "_count|" in k and "route=/healthz" in k and v > 0
     ]
     assert count_keys, f"no histogram _count for /healthz, got: {list(parsed.keys())}"
 
@@ -326,8 +322,7 @@ async def test_dsar_observer_records_histogram_on_close() -> None:
     assert any("_count|" in k and "type=delete" in k and v >= 1 for k, v in hist.items())
     # The 3.5-day value lands in the `le=7.0` bucket.
     assert any(
-        "_bucket|" in k and "type=delete" in k and "le=7.0" in k and v >= 1
-        for k, v in hist.items()
+        "_bucket|" in k and "type=delete" in k and "le=7.0" in k and v >= 1 for k, v in hist.items()
     )
 
 
@@ -390,9 +385,7 @@ async def test_affiliate_revenue_counter_increments_on_confirmed(
     assert resp.status_code == 204
 
     scrape = await seeded_client.get("/metrics")
-    revenue = _metric_by_name(
-        scrape.text, "loftly_api_affiliate_revenue_thb_total"
-    )
+    revenue = _metric_by_name(scrape.text, "loftly_api_affiliate_revenue_thb_total")
     hits = [v for k, v in revenue.items() if f"partner_id={_PARTNER}" in k]
     assert hits and hits[0] == pytest.approx(750.0)
 

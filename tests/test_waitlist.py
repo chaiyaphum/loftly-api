@@ -139,9 +139,7 @@ async def test_join_hashes_ip_and_user_agent(seeded_client: AsyncClient) -> None
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         row = (
-            await session.execute(
-                select(Waitlist).where(Waitlist.email == "pii@loftly.example")
-            )
+            await session.execute(select(Waitlist).where(Waitlist.email == "pii@loftly.example"))
         ).scalar_one()
 
     assert row.ip_hash is not None
@@ -153,9 +151,7 @@ async def test_join_hashes_ip_and_user_agent(seeded_client: AsyncClient) -> None
     assert all(c in "0123456789abcdef" for c in row.user_agent_hash)
     assert raw_ua not in row.user_agent_hash
     # And across the whole row serialization, the raw UA string is absent.
-    serialized = " ".join(
-        str(v) for v in (row.email, row.ip_hash or "", row.user_agent_hash or "")
-    )
+    serialized = " ".join(str(v) for v in (row.email, row.ip_hash or "", row.user_agent_hash or ""))
     assert "PII-SHOULD-BE-HASHED" not in serialized
 
 
@@ -177,11 +173,7 @@ async def test_join_writes_audit_row_without_raw_email(
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         audit_rows = list(
-            (
-                await session.execute(
-                    select(AuditLog).where(AuditLog.action == "waitlist.joined")
-                )
-            )
+            (await session.execute(select(AuditLog).where(AuditLog.action == "waitlist.joined")))
             .scalars()
             .all()
         )

@@ -50,9 +50,7 @@ async def get_me(
     `get_current_user_id`, so a missing row here means the user was deleted
     after the token was issued — treat as 404 (client should drop tokens).
     """
-    user = (
-        (await session.execute(select(User).where(User.id == user_id))).scalars().one_or_none()
-    )
+    user = (await session.execute(select(User).where(User.id == user_id))).scalars().one_or_none()
     if user is None or user.deleted_at is not None:
         raise LoftlyError(
             status_code=status.HTTP_404_NOT_FOUND,

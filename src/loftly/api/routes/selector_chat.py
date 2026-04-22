@@ -81,6 +81,7 @@ _HAIKU_FALLBACK_EN = "Sorry, please try again in a moment."
 # Rate-limit copy — must match the Thai string in POST_V1.md §1 AC-4.
 _RATE_LIMIT_TH = "คำถามต่อเซสชันครบแล้ว เริ่ม Selector ใหม่ได้ที่ /selector"
 
+
 # Sentinel cache key marking that `selector_chat_opened` has fired once for
 # this session. Guarantees at-most-once semantics across worker restarts
 # within the 24h session lifetime.
