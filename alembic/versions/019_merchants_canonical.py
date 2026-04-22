@@ -208,14 +208,18 @@ def upgrade() -> None:
             "CREATE INDEX idx_merchants_canonical_altnames_gin "
             "ON merchants_canonical USING GIN (alt_names);"
         )
-        # Full-text GIN covering display_name_th + display_name_en + alt_names.
-        op.execute(
-            "CREATE INDEX idx_merchants_canonical_fts_gin "
-            "ON merchants_canonical USING GIN ("
-            "to_tsvector('simple', coalesce(display_name_th,'') || ' ' || "
-            "coalesce(display_name_en,'') || ' ' || "
-            "array_to_string(alt_names,' ')));"
-        )
+        # NOTE: The originally-planned full-text GIN index on the concatenation
+        # of display_name_th + display_name_en + alt_names was dropped here
+        # because Postgres requires IMMUTABLE functions in expression indexes
+        # and `array_to_string` + `coalesce(...) || ...` is classified STABLE
+        # (collation-dependent). Autocomplete today uses:
+        #   1. the GIN on alt_names above for exact-match expansion, and
+        #   2. trigram similarity via pg_trgm at query time in the search
+        #      service (see src/loftly/services/merchant_search.py).
+        # If full-text search becomes a hot path, a later migration should add
+        # a STORED generated column (`search_vector tsvector GENERATED ALWAYS
+        # AS (to_tsvector('simple', ...)) STORED`) and index that — which
+        # keeps the IMMUTABLE constraint satisfied. Tracked as §9.1 follow-up.
         # Partial on merged rows for split rollback lookups.
         op.create_index(
             "idx_merchants_canonical_merged_into",
