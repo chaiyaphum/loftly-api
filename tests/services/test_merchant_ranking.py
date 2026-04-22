@@ -612,10 +612,14 @@ async def test_stack_cap_clamps_extreme_uplift(seeded_db: object) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_missing_valuation_emits_rule_and_zero_confidence(
+async def test_missing_valuation_uses_fallback_and_still_ranks(
     seeded_db: object,
 ) -> None:
-    """No PointValuation row for the card's currency → rule + confidence=0."""
+    """No PointValuation row for the card's currency → service uses the
+    `_FallbackValuation` starter table instead of zeroing out. Emits a
+    `fallback_valuation` rule so the UI can flag "estimated, not from
+    weekly compute" — but the headline stays non-zero so the page still
+    reads as real product."""
     _ = seeded_db
     merchant_id = await _insert_merchant()
 
@@ -624,9 +628,9 @@ async def test_missing_valuation_emits_rule_and_zero_confidence(
         ranked = await rank_cards_for_merchant(session, merchant_id, as_of=TODAY)
 
     for row in ranked:
-        assert "missing_valuation" in row.applied_rules
-        assert row.confidence == 0.0
-        assert row.est_value_per_1000_thb == 0.0
+        assert "fallback_valuation" in row.applied_rules
+        assert row.confidence > 0.0
+        assert row.est_value_per_1000_thb > 0.0
 
 
 async def test_low_confidence_valuation_surfaces_rule(seeded_db: object) -> None:
