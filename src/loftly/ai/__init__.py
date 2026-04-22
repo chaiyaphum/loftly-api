@@ -52,7 +52,7 @@ class SelectorContext:
 
     cards: list[CardModel]
     valuations_by_currency_code: dict[str, PointValuation]
-    active_promos: "PromoSnapshot | None" = None
+    active_promos: PromoSnapshot | None = None
 
 
 @dataclass(frozen=True)

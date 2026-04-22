@@ -26,7 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import and_, or_, select
@@ -97,7 +97,7 @@ async def build_promo_snapshot(
     legitimately no active promos). Caller decides degrade behavior.
     """
     if as_of is None:
-        as_of = datetime.now(tz=timezone.utc).date()
+        as_of = datetime.now(tz=UTC).date()
 
     stmt = (
         select(Promo)
@@ -237,7 +237,7 @@ def degraded_snapshot(as_of: date | None = None, reason: str = "stale") -> Promo
     the LLM — the prompt just sees the sentinel block.
     """
     return PromoSnapshot(
-        as_of=as_of or datetime.now(tz=timezone.utc).date(),
+        as_of=as_of or datetime.now(tz=UTC).date(),
         entries=[],
         digest="degraded",
         total_count_before_cap=0,

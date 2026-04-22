@@ -201,7 +201,7 @@ class MerchantCanonicalizerInput(BaseModel):
 
     candidates: list[CandidatePromo]
 
-    def model_post_init(self, __context: Any) -> None:  # noqa: D401
+    def model_post_init(self, __context: Any) -> None:
         if len(self.candidates) > 20:
             raise ValueError("Prompt 8 batches cap at 20 candidates.")
 
@@ -222,7 +222,7 @@ __all__ = [
     "MerchantSearchResult",
     "MerchantStatus",
     "MerchantType",
-    "ProposedMerchant",
     "PromoSummary",
+    "ProposedMerchant",
     "UncertainCandidate",
 ]
