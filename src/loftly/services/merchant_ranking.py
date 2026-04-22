@@ -85,7 +85,7 @@ class _FallbackValuation:
     we need to satisfy. Not persisted, not committed, just a value object.
     """
 
-    __slots__ = ("thb_per_point", "confidence")
+    __slots__ = ("confidence", "thb_per_point")
 
     def __init__(self, thb_per_point: float, confidence: float) -> None:
         self.thb_per_point = Decimal(str(thb_per_point))
