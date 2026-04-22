@@ -27,6 +27,7 @@ dependencies = [
     "resend>=2.29.0",
     "google-auth>=2.49.2",
     "prometheus-client>=0.20,<1",
+    "redis>=7.4.0",
 ]
 
 [project.optional-dependencies]
@@ -64,7 +65,6 @@ dev = [
     "types-python-jose>=3.3,<4",
     "pytest-httpx>=0.35.0",
     "respx>=0.23.1",
-    "redis>=7.4.0",
     "moto[s3]>=5.0,<6",
     "boto3>=1.35,<2",
     "cryptography>=43,<46",
