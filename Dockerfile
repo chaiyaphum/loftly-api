@@ -31,6 +31,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY src/ ./src/
 COPY alembic.ini ./alembic.ini
 COPY alembic/ ./alembic/
+COPY scripts/ ./scripts/
 COPY README.md ./README.md
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
@@ -51,6 +52,7 @@ COPY --from=builder --chown=loftly:loftly /app/.venv /app/.venv
 COPY --from=builder --chown=loftly:loftly /app/src /app/src
 COPY --from=builder --chown=loftly:loftly /app/alembic /app/alembic
 COPY --from=builder --chown=loftly:loftly /app/alembic.ini /app/alembic.ini
+COPY --from=builder --chown=loftly:loftly /app/scripts /app/scripts
 
 USER loftly
 
