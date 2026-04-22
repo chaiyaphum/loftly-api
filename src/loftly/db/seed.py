@@ -158,6 +158,13 @@ CURRENCIES: list[dict[str, Any]] = [
         "currency_type": "bank_proprietary",
         "issuing_entity": "SCB",
     },
+    {
+        "code": "MEMBERSHIP_REWARDS",
+        "display_name_en": "Membership Rewards",
+        "display_name_th": "เมมเบอร์ชิป รีวอร์ด",
+        "currency_type": "bank_proprietary",
+        "issuing_entity": "American Express",
+    },
 ]
 
 
@@ -228,6 +235,107 @@ SAMPLE_CARDS: list[dict[str, Any]] = [
         },
         "description_th": "บัตรสะสมไมล์ ROP สายการบินไทย ตรงโปรแกรม",
         "description_en": "Direct ROP earner for Thai Airways loyalists",
+    },
+]
+
+
+# Batch-1 enrichment cards — the 3 additional Phase-1 priority cards that are
+# NOT already in `SAMPLE_CARDS`. `seed_catalog.py` inserts these on top of the
+# base set so the staging catalog has the 5 editorial starter cards from
+# `/mvp/CARD_PRIORITY.md §Tier 1` (KBank WISDOM + UOB PRVI Miles are already in
+# SAMPLE_CARDS; this block covers KTC Forever + SCB Prime + Amex Gold).
+#
+# Deliberately kept *out* of `seed_all` / the `seeded_db` test fixture so the
+# merchant-ranking golden snapshot and other "== 3 sample cards" assertions
+# keep working. Staging / production run `seed_batch1_cards` in addition via
+# `scripts/seed_catalog.py`.
+BATCH_1_CARDS: list[dict[str, Any]] = [
+    {
+        "slug": "ktc-forever",
+        "bank_slug": "ktc",
+        "currency_code": "KTC_FOREVER",
+        "display_name": "KTC Forever",
+        "tier": "Signature",
+        "network": "Visa",
+        "annual_fee_thb": 5000.00,
+        "annual_fee_waiver": "ฟรีปีแรก",
+        "min_income_thb": 50000.00,
+        "min_age": 20,
+        "earn_rate_local": {
+            "dining": 3.0,
+            "entertainment": 2.0,
+            "online": 1.5,
+            "default": 1.0,
+        },
+        "earn_rate_foreign": {"default": 1.0},
+        "benefits": {
+            "lounge": {"provider": "Priority Pass", "visits_per_year": 2},
+            "insurance": {"travel_coverage_thb": 10_000_000},
+            "dining_program": "KTC U SHOP (up to 30% off)",
+            "concierge": "24/7 KTC World (Visa Infinite)",
+            "no_expiry": True,
+        },
+        "signup_bonus": None,
+        "description_th": "KTC Forever Points ไม่หมดอายุ — เหมาะกับสายสะสมระยะยาว",
+        "description_en": "KTC Forever Points never expire — built for long-term accumulators",
+    },
+    {
+        "slug": "scb-prime",
+        "bank_slug": "scb",
+        "currency_code": "SCB_REWARDS",
+        "display_name": "SCB PRIME",
+        "tier": "Signature",
+        "network": "Visa",
+        "annual_fee_thb": 3500.00,
+        "annual_fee_waiver": "ฟรีปีแรก",
+        "min_income_thb": 50000.00,
+        "min_age": 20,
+        "earn_rate_local": {
+            "dining": 3.0,
+            "supermarket": 2.0,
+            "fuel": 2.0,
+            "online": 1.5,
+            "default": 1.0,
+        },
+        "earn_rate_foreign": {"default": 1.0},
+        "benefits": {
+            "lounge": {"provider": "Priority Pass", "visits_per_year": 2},
+            "insurance": {"travel_coverage_thb": 3_000_000},
+            "cashback_model": "direct_statement_credit",
+            "integration": "SCB EASY app",
+        },
+        "signup_bonus": None,
+        "description_th": "บัตรเรือธง SCB สำหรับไลฟ์สไตล์ในประเทศ — เครดิตเงินคืนผ่าน SCB EASY",
+        "description_en": "SCB's flagship domestic lifestyle card — statement credit via SCB EASY",
+    },
+    {
+        "slug": "amex-gold",
+        "bank_slug": "amex-th",
+        "currency_code": "MEMBERSHIP_REWARDS",
+        "display_name": "Amex Gold",
+        "tier": "Gold",
+        "network": "Amex",
+        "annual_fee_thb": 5250.00,
+        "annual_fee_waiver": None,
+        "min_income_thb": 50000.00,
+        "min_age": 20,
+        "earn_rate_local": {
+            "dining": 2.0,
+            "supermarket": 1.0,
+            "amex_selects": 1.5,
+            "default": 1.0,
+        },
+        "earn_rate_foreign": {"default": 1.0},
+        "benefits": {
+            "lounge": None,
+            "insurance": {"travel_coverage_thb": 5_000_000},
+            "dining_program": "Amex Selects TH (15-25% off partners)",
+            "transfer_partners": ["KrisFlyer", "ROP", "Asia Miles", "Marriott Bonvoy"],
+            "no_expiry": True,
+        },
+        "signup_bonus": None,
+        "description_th": "Amex Gold — เครือร้านอาหารและ Membership Rewards โอนสายการบินหลายพันธมิตร",
+        "description_en": "Amex Gold — dining-forward with multi-partner Membership Rewards transfers",
     },
 ]
 
@@ -303,7 +411,12 @@ async def _seed_currencies(session: AsyncSession) -> int:
     return inserted
 
 
-async def _seed_sample_cards(session: AsyncSession) -> int:
+async def _seed_cards_from(session: AsyncSession, cards: list[dict[str, Any]]) -> int:
+    """Insert any `cards` rows missing from the DB (matched on `slug`).
+
+    Shared helper so both the `seed_all` base path and the Batch-1 enrichment
+    path use identical insert semantics.
+    """
     # Need banks+currencies committed so we can look them up by slug/code.
     # They're added in the same session; flush to make them visible.
     await session.flush()
@@ -315,7 +428,7 @@ async def _seed_sample_cards(session: AsyncSession) -> int:
     cur_by_code = {c.code: c for c in (await session.scalars(select(LoyaltyCurrency))).all()}
 
     inserted = 0
-    for row in SAMPLE_CARDS:
+    for row in cards:
         if row["slug"] in existing_slugs:
             continue
         bank = bank_by_slug.get(row["bank_slug"])
@@ -350,4 +463,28 @@ async def _seed_sample_cards(session: AsyncSession) -> int:
             )
         )
         inserted += 1
+    return inserted
+
+
+async def _seed_sample_cards(session: AsyncSession) -> int:
+    return await _seed_cards_from(session, SAMPLE_CARDS)
+
+
+async def seed_batch1_cards(session: AsyncSession) -> int:
+    """Insert the Batch-1 enrichment cards (KTC Forever, SCB Prime, Amex Gold).
+
+    Idempotent: rows with slugs already present are skipped. Commits on
+    success so it can be called standalone from `scripts/seed_catalog.py`
+    after `seed_all` has returned. Intentionally NOT invoked from `seed_all`
+    so the test fixture keeps its 3-sample-card baseline.
+    """
+    # Make sure banks + currencies needed by the new cards exist. `seed_all`
+    # already runs these when called first, but this function can be invoked
+    # independently (e.g. against a hand-prepared DB), so re-seed defensively.
+    await _seed_banks(session)
+    await _seed_currencies(session)
+
+    inserted = await _seed_cards_from(session, BATCH_1_CARDS)
+    await session.commit()
+    log.info("batch1_cards_seed_complete", cards_inserted=inserted)
     return inserted
