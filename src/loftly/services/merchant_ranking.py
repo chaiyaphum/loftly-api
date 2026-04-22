@@ -101,14 +101,14 @@ class _FallbackValuation:
 # populates `point_valuations`, the DB reads override these.
 _FALLBACK_VALUATIONS_BY_CODE: dict[str, tuple[float, float]] = {
     # (thb_per_point, confidence)
-    "KF": (0.82, 0.6),           # KrisFlyer
-    "AM": (0.80, 0.6),           # Asia Miles
-    "ROP": (0.35, 0.7),          # Royal Orchid Plus
-    "BONVOY": (0.35, 0.6),       # Marriott Bonvoy
-    "K_POINT": (0.15, 0.55),     # KBank Rewards
-    "UOB_REWARDS": (0.12, 0.55), # UOB Rewards
-    "KTC_FOREVER": (0.20, 0.55), # KTC Forever Points
-    "SCB_REWARDS": (0.18, 0.55), # SCB M Points
+    "KF": (0.82, 0.6),  # KrisFlyer
+    "AM": (0.80, 0.6),  # Asia Miles
+    "ROP": (0.35, 0.7),  # Royal Orchid Plus
+    "BONVOY": (0.35, 0.6),  # Marriott Bonvoy
+    "K_POINT": (0.15, 0.55),  # KBank Rewards
+    "UOB_REWARDS": (0.12, 0.55),  # UOB Rewards
+    "KTC_FOREVER": (0.20, 0.55),  # KTC Forever Points
+    "SCB_REWARDS": (0.18, 0.55),  # SCB M Points
     "MEMBERSHIP_REWARDS": (1.0, 0.6),  # Amex MR — higher because transferable to airlines
 }
 
@@ -158,12 +158,8 @@ async def _fetch_merchant_promos(
     - `Promo.valid_until IS NULL OR valid_until >= as_of` (expiry)
     - `Promo.valid_from IS NULL OR valid_from <= as_of` (not-yet-started)
     """
-    valid_until_ok: ColumnElement[bool] = Promo.valid_until.is_(None) | (
-        Promo.valid_until >= as_of
-    )
-    valid_from_ok: ColumnElement[bool] = Promo.valid_from.is_(None) | (
-        Promo.valid_from <= as_of
-    )
+    valid_until_ok: ColumnElement[bool] = Promo.valid_until.is_(None) | (Promo.valid_until >= as_of)
+    valid_from_ok: ColumnElement[bool] = Promo.valid_from.is_(None) | (Promo.valid_from <= as_of)
     stmt = (
         select(Promo)
         .join(
@@ -323,9 +319,7 @@ async def rank_cards_for_merchant(
     effective_date = as_of or date.today()
 
     merchant = (
-        await session.execute(
-            select(MerchantCanonical).where(MerchantCanonical.id == merchant_id)
-        )
+        await session.execute(select(MerchantCanonical).where(MerchantCanonical.id == merchant_id))
     ).scalar_one_or_none()
     if merchant is None or merchant.status != "active":
         log.info(

@@ -96,7 +96,9 @@ def _valuation_schema(val: PointValuation, currency: LoyaltyCurrency) -> Valuati
     )
 
 
-async def _latest_per_currency(session: AsyncSession) -> list[tuple[PointValuation, LoyaltyCurrency]]:
+async def _latest_per_currency(
+    session: AsyncSession,
+) -> list[tuple[PointValuation, LoyaltyCurrency]]:
     """Return (valuation, currency) tuples — one row per currency, latest `computed_at`."""
     # Subquery: max(computed_at) grouped by currency_id.
     latest_subq = (

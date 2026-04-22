@@ -148,9 +148,7 @@ def _extract_section(text: str, start_header: str, end_header: str | None) -> st
     """
     start = text.find(start_header)
     if start == -1:
-        raise RuntimeError(
-            f"selector_chat_followup.md missing expected header {start_header!r}"
-        )
+        raise RuntimeError(f"selector_chat_followup.md missing expected header {start_header!r}")
     # Skip past the header line itself.
     after_header = text.find("\n", start)
     if after_header == -1:
@@ -160,9 +158,7 @@ def _extract_section(text: str, start_header: str, end_header: str | None) -> st
     else:
         end = text.find(end_header, after_header)
         if end == -1:
-            raise RuntimeError(
-                f"selector_chat_followup.md missing expected header {end_header!r}"
-            )
+            raise RuntimeError(f"selector_chat_followup.md missing expected header {end_header!r}")
         body = text[after_header + 1 : end]
     # Strip surrounding triple-backtick fences if present. The md wraps each
     # section body in a ``` fence; for the prompt we want the raw contents.
@@ -203,8 +199,7 @@ def render(variables: Mapping[str, object]) -> RenderedPrompt:
     missing = required_names - set(variables.keys())
     if missing:
         raise ValueError(
-            f"selector_chat_followup.render: missing required placeholders: "
-            f"{sorted(missing)}"
+            f"selector_chat_followup.render: missing required placeholders: {sorted(missing)}"
         )
 
     # Substitute. Use a dict with str-coerced values so callers can pass ints
@@ -232,8 +227,7 @@ def render(variables: Mapping[str, object]) -> RenderedPrompt:
                 seen.add(name)
                 ordered.append(name)
         raise ValueError(
-            f"selector_chat_followup.render: unfilled placeholders in user "
-            f"template: {ordered}"
+            f"selector_chat_followup.render: unfilled placeholders in user template: {ordered}"
         )
 
     return RenderedPrompt(system=system_block, user=rendered_user)

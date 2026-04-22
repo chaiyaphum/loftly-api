@@ -141,11 +141,7 @@ async def test_detail_returns_history_array_when_data_exists(
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         rop = (
-            (
-                await session.execute(
-                    select(LoyaltyCurrency).where(LoyaltyCurrency.code == "ROP")
-                )
-            )
+            (await session.execute(select(LoyaltyCurrency).where(LoyaltyCurrency.code == "ROP")))
             .scalars()
             .one()
         )
@@ -185,11 +181,7 @@ async def test_list_uses_latest_row_per_currency(seeded_client: AsyncClient) -> 
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         rop = (
-            (
-                await session.execute(
-                    select(LoyaltyCurrency).where(LoyaltyCurrency.code == "ROP")
-                )
-            )
+            (await session.execute(select(LoyaltyCurrency).where(LoyaltyCurrency.code == "ROP")))
             .scalars()
             .one()
         )

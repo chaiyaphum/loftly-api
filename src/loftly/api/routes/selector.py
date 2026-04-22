@@ -1033,7 +1033,8 @@ async def archive_selector_session(
 async def get_session_result(
     session_id: uuid.UUID,
     token: str | None = Query(
-        None, description="Signed selector retrieval token (optional — session_id UUIDv4 entropy is the default gate)"
+        None,
+        description="Signed selector retrieval token (optional — session_id UUIDv4 entropy is the default gate)",
     ),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
