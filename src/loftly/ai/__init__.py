@@ -21,11 +21,17 @@ the module-level `_PROVIDER` singleton via `set_provider(...)`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from loftly.db.models.card import Card as CardModel
 from loftly.db.models.point_valuation import PointValuation
 from loftly.schemas.selector import SelectorInput, SelectorResult
+
+if TYPE_CHECKING:
+    # Lazy import to avoid circular import: promo_snapshot pulls db.models.promo
+    # which itself depends on loftly.* runtime state. `SelectorContext` just
+    # needs the type symbol for the optional field.
+    from loftly.selector.promo_snapshot import PromoSnapshot
 
 
 @dataclass(frozen=True)
@@ -35,10 +41,18 @@ class SelectorContext:
     Resolved by the route handler (DB read) and handed to the provider so the
     provider stays pure / testable. Cards are eager-loaded with bank +
     earn_currency so providers can render display fields without extra I/O.
+
+    `active_promos` is the POST_V1 §3 (Tier A fast-follow, ratified 2026-04-22)
+    promo-context slot. `None` means the feature flag
+    `LOFTLY_FF_SELECTOR_PROMO_CONTEXT` is OFF or the route handler never
+    fetched a snapshot — providers treat it as "no promo context, rank on base
+    earn only". `degraded_snapshot(...)` is a distinct signal that the fetch
+    was attempted but failed.
     """
 
     cards: list[CardModel]
     valuations_by_currency_code: dict[str, PointValuation]
+    active_promos: "PromoSnapshot | None" = None
 
 
 @dataclass(frozen=True)

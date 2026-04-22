@@ -41,7 +41,14 @@ _HAIKU_SYSTEM_PROMPT = (
     "You are Loftly's fast fallback selector. The Sonnet primary timed out. "
     "Pick the best 1-3 credit cards for the user's spend profile from the "
     "compact list provided. Respond via the `return_selector_stack` tool with "
-    "a brief Thai rationale. Prioritize correctness over richness."
+    "a brief Thai rationale. Prioritize correctness over richness. "
+    # Mirrors the Sonnet promo-context contract so the fallback produces a
+    # consistent shape (stack items may include `cited_promo_ids`). See
+    # POST_V1 §3 Tier A (2026-04-22).
+    "When an `ACTIVE PROMOS` block is supplied and a promo fits the user's "
+    "category + spend + card stack, cite the promo by title in reason_th and "
+    "populate `cited_promo_ids` on that stack item. Never invent promos; if "
+    "none fit, omit mention. Never cite a promo whose `cards=[]` is empty."
 )
 
 
@@ -105,6 +112,20 @@ class AnthropicHaikuProvider:
             separators=(",", ":"),
             ensure_ascii=False,
         )
+        # POST_V1 §3 Tier A: pass through the promo block inline (no prompt
+        # caching on the Haiku path — spec says tighter context budget). When
+        # `active_promos` is None the block is omitted entirely.
+        from loftly.selector.promo_snapshot import serialize_snapshot_for_prompt
+
+        promos_block = (
+            serialize_snapshot_for_prompt(context.active_promos)
+            if context.active_promos is not None
+            else None
+        )
+
+        user_content = f"Cards: {cards_json}\nProfile: {profile_json}\nLocale: {input.locale}"
+        if promos_block is not None:
+            user_content = f"{user_content}\n\n{promos_block}"
 
         response: Any = await cast(Any, client.messages.create)(
             model=HAIKU_MODEL,
@@ -115,9 +136,7 @@ class AnthropicHaikuProvider:
             messages=[
                 {
                     "role": "user",
-                    "content": (
-                        f"Cards: {cards_json}\nProfile: {profile_json}\nLocale: {input.locale}"
-                    ),
+                    "content": user_content,
                 }
             ],
         )

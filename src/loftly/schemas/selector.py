@@ -39,6 +39,28 @@ class SelectorStackItem(BaseModel):
     annual_fee_thb: float | None = None
     reason_th: str
     reason_en: str | None = None
+    # POST_V1 §3 Tier A (2026-04-22): promos the LLM cited for this stack item.
+    # Populated only when `LOFTLY_FF_SELECTOR_PROMO_CONTEXT` is ON. Server
+    # strips any id not in the current promo snapshot before returning.
+    cited_promo_ids: list[str] = Field(default_factory=list)
+
+
+class PromoChipPayload(BaseModel):
+    """Minimal promo details embedded in SelectorResult so the frontend can
+    render a chip without a second API round-trip. Mirrors the shape of
+    PromoChipProps in `loftly-web/src/components/loftly/PromoChip.tsx`.
+    """
+
+    promo_id: str
+    merchant: str | None = None
+    discount_value: str | None = None
+    discount_type: str | None = None
+    valid_until: str | None = None  # ISO date
+    min_spend: float | None = None
+    source_url: str | None = None
+
+
+PromoContextStatus = Literal["ok", "degraded", "stale"]
 
 
 FallbackReason = Literal[
@@ -80,3 +102,18 @@ class SelectorResult(BaseModel):
     fallback_reason: FallbackReason | None = None
     used_deterministic: bool = False
     partial_unlock: bool = False
+    # POST_V1 §3 Tier A (2026-04-22) — Promo-Aware Card Selector.
+    # Union of every stack item's `cited_promo_ids`, computed server-side after
+    # validation against the live snapshot. Empty when flag is OFF or no
+    # promos were cited.
+    cited_promo_ids: list[str] = Field(default_factory=list)
+    # "ok" — snapshot built cleanly and at least attempted
+    # "degraded" — query failed / timed out / feature flag forced degrade
+    # "stale" — snapshot older than the 72h freshness window
+    promo_context_status: PromoContextStatus = "ok"
+    # sha256(first16) of the promo snapshot's (id,checksum) material. Surfaced
+    # for Langfuse trace correlation + cache-key debugging. None when flag OFF.
+    promo_snapshot_digest: str | None = None
+    # Full chip payloads for the ids in `cited_promo_ids`, denormalized from
+    # the snapshot so the frontend doesn't need a second fetch.
+    promo_chips: list[PromoChipPayload] = Field(default_factory=list)

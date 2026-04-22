@@ -121,6 +121,21 @@ class Settings(BaseSettings):
     # --- Prompt versioning ---
     loftly_prompt_version_override: str | None = Field(default=None)
 
+    # --- Feature flags (env-driven kill switches) ---
+    # POST_V1 §3 Tier A (2026-04-22) — Promo-Aware Card Selector. When ON, the
+    # selector route builds a promo snapshot and injects it into Sonnet/Haiku's
+    # cached prompt. Default OFF so existing callers keep the v1 behavior.
+    # Will be flipped ON in staging once shadow-mode eval clears per
+    # `.claude/plans/.../iverson.md §1.9 Rollout`.
+    loftly_ff_selector_promo_context: bool = Field(default=False)
+
+    # POST_V1 §9 Workstream B (ratified 2026-04-22 Q18) — Merchant Reverse
+    # Lookup. Gates both the `/v1/merchants/*` read surface and the
+    # `canonicalize_merchants` daily job. Default OFF — staging can flip it
+    # ON once the seeded 50 merchants clear manual QA + the canonicalization
+    # pipeline's LLM step is wired to the Haiku provider.
+    merchants_reverse_lookup_enabled: bool = Field(default=False)
+
     @field_validator("affiliate_partner_secrets", mode="before")
     @classmethod
     def _parse_partner_secrets(cls, v: Any) -> Any:

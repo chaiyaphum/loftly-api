@@ -59,8 +59,18 @@ from loftly.db.models.selector_session import SelectorSession
 from loftly.observability.posthog import capture as posthog_capture
 from loftly.observability.posthog import hash_distinct_id
 from loftly.prompts.typhoon_nlu_spend import prompt_slug as nlu_prompt_slug
-from loftly.schemas.selector import FallbackReason, SelectorInput, SelectorResult
+from loftly.schemas.selector import (
+    FallbackReason,
+    PromoChipPayload,
+    SelectorInput,
+    SelectorResult,
+)
 from loftly.schemas.spend_nlu import SpendNLURequest, SpendNLUResponse
+from loftly.selector.promo_snapshot import (
+    PromoSnapshot,
+    build_promo_snapshot,
+    degraded_snapshot,
+)
 from loftly.selector.session_cache import (
     SessionMeta,
     archive_session,
@@ -80,6 +90,10 @@ _CATEGORY_SUM_TOLERANCE = 100
 # AI_PROMPTS.md §Failure policy: Sonnet >10s → Haiku; Haiku >5s → deterministic.
 _SONNET_TIMEOUT_SEC = 10.0
 _HAIKU_TIMEOUT_SEC = 5.0
+# POST_V1 §3 Tier A (2026-04-22): promo snapshot must be cheap — 500ms budget.
+# Any failure falls back to `degraded_snapshot(reason="query_failed")` so the
+# Selector never hard-fails on a flaky index.
+_PROMO_SNAPSHOT_TIMEOUT_SEC = 0.5
 # AI_PROMPTS.md §Quality gates: total THB must match Σ (points × thb_per_point) ±5%.
 _THB_DRIFT_TOLERANCE = 0.05
 # 429 retry policy — one retry with fixed backoff before falling back.
@@ -161,6 +175,33 @@ def _validate_earning_consistency(
 # ---------------------------------------------------------------------------
 
 
+async def _load_promo_snapshot(session: AsyncSession) -> PromoSnapshot | None:
+    """Load the active-promo snapshot if the feature flag is ON.
+
+    POST_V1 §3 Tier A (2026-04-22). Behind `LOFTLY_FF_SELECTOR_PROMO_CONTEXT`
+    so we can flip promo context on/off in staging without a redeploy.
+
+    - Flag OFF -> returns None (providers skip the block, backward-compat).
+    - Flag ON + happy path -> returns the snapshot.
+    - Flag ON + 500ms timeout or exception -> returns a degraded sentinel so
+      the Selector still runs; the prompt gets `PROMO_CONTEXT_UNAVAILABLE`.
+    """
+    settings = get_settings()
+    if not getattr(settings, "loftly_ff_selector_promo_context", False):
+        return None
+    try:
+        return await asyncio.wait_for(
+            build_promo_snapshot(session),
+            timeout=_PROMO_SNAPSHOT_TIMEOUT_SEC,
+        )
+    except BaseException as exc:  # timeout, DB error, etc.
+        log.warning(
+            "selector_promo_snapshot_failed",
+            error=str(exc)[:200],
+        )
+        return degraded_snapshot(reason="query_failed")
+
+
 async def _load_context(session: AsyncSession) -> SelectorContext:
     cards_stmt = (
         select(CardModel)
@@ -188,9 +229,12 @@ async def _load_context(session: AsyncSession) -> SelectorContext:
         if code not in valuations_by_code:
             valuations_by_code[code] = valuation
 
+    active_promos = await _load_promo_snapshot(session)
+
     return SelectorContext(
         cards=cards,
         valuations_by_currency_code=valuations_by_code,
+        active_promos=active_promos,
     )
 
 
@@ -523,6 +567,99 @@ async def _stream_selector(result: SelectorResult) -> AsyncIterator[bytes]:
 # ---------------------------------------------------------------------------
 
 
+def _apply_promo_context(
+    result: SelectorResult,
+    context: SelectorContext,
+) -> SelectorResult:
+    """Server-side validation + denormalization of promo-context fields.
+
+    POST_V1 §3 Tier A (2026-04-22). Contract:
+    1. If `active_promos` is None (flag OFF), leave fields empty + status='ok'.
+    2. If snapshot is degraded, stamp status='degraded' and strip any LLM-cited
+       ids — the prompt told it PROMO_CONTEXT_UNAVAILABLE, but belt + braces.
+    3. For an OK snapshot, filter each stack item's `cited_promo_ids` to only
+       ids that exist in `snapshot.entries`. Log invalid cites so Langfuse can
+       alert on hallucination rate.
+    4. Union the filtered ids into top-level `cited_promo_ids` and build the
+       chip payload from snapshot entries for the frontend.
+    """
+    snapshot = context.active_promos
+    if snapshot is None:
+        # Flag OFF — feature disabled. Empty fields.
+        return result.model_copy(
+            update={
+                "cited_promo_ids": [],
+                "promo_context_status": "ok",
+                "promo_snapshot_digest": None,
+                "promo_chips": [],
+            }
+        )
+
+    if snapshot.status != "ok":
+        # Degraded / stale — LLM was instructed not to cite. Strip anything
+        # that slipped through.
+        stripped_stack = [
+            item.model_copy(update={"cited_promo_ids": []}) for item in result.stack
+        ]
+        return result.model_copy(
+            update={
+                "stack": stripped_stack,
+                "cited_promo_ids": [],
+                "promo_context_status": snapshot.status,
+                "promo_snapshot_digest": snapshot.digest,
+                "promo_chips": [],
+            }
+        )
+
+    # Happy path — filter hallucinated ids.
+    valid_ids = {e.promo_id for e in snapshot.entries}
+    cleaned_stack: list[Any] = []
+    union_cited: list[str] = []
+    seen: set[str] = set()
+    for item in result.stack:
+        kept: list[str] = []
+        dropped: list[str] = []
+        for pid in item.cited_promo_ids:
+            if pid in valid_ids:
+                kept.append(pid)
+                if pid not in seen:
+                    seen.add(pid)
+                    union_cited.append(pid)
+            else:
+                dropped.append(pid)
+        if dropped:
+            log.warning(
+                "selector_invalid_promo_cite",
+                dropped_ids=dropped,
+                card_id=item.card_id,
+                snapshot_digest=snapshot.digest,
+            )
+        cleaned_stack.append(item.model_copy(update={"cited_promo_ids": kept}))
+
+    chips = [
+        PromoChipPayload(
+            promo_id=e.promo_id,
+            merchant=e.merchant,
+            discount_value=e.discount_value,
+            discount_type=e.discount_type,
+            valid_until=e.valid_until,
+            min_spend=e.minimum_spend,
+        )
+        for e in snapshot.entries
+        if e.promo_id in union_cited
+    ]
+
+    return result.model_copy(
+        update={
+            "stack": cleaned_stack,
+            "cited_promo_ids": union_cited,
+            "promo_context_status": "ok",
+            "promo_snapshot_digest": snapshot.digest,
+            "promo_chips": chips,
+        }
+    )
+
+
 async def _persist_session_meta(
     result: SelectorResult,
     context: SelectorContext,
@@ -576,6 +713,9 @@ async def _compute_or_get_cached(
 
     context = await _load_context(session)
     raw_result = await _run_with_fallback(payload, context)
+    # Validate + denormalize promo fields before persistence so the cached
+    # envelope + DB row share a single shape.
+    raw_result = _apply_promo_context(raw_result, context)
 
     row = SelectorSession(
         user_id=None,

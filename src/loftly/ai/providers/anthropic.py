@@ -62,7 +62,13 @@ _SYSTEM_PROMPT = (
     "income heuristics. Always respond via the `return_selector_stack` tool — "
     "no prose. Rationale fields must be Thai when locale=th, else English, "
     "<500 chars, and avoid banned marketing phrases. Include warnings for "
-    "eligibility concerns."
+    "eligibility concerns. "
+    # POST_V1 §3 Tier A (2026-04-22) — Promo-Aware Card Selector.
+    "When active promos apply, stack their value on top of the base earn rate, "
+    "cite the promo by title in the reason_th, and populate `cited_promo_ids` "
+    "on that stack item with the promo_ids used. Never invent promos; if none "
+    "fit the user's categories, spend, or card stack, omit mention and rank on "
+    "base earn only. Never cite a promo whose `cards=[]` is empty."
 )
 
 # JSON schema aligned with SelectorResult. Used both for Sonnet + Haiku.
@@ -90,6 +96,13 @@ SELECTOR_TOOL_SCHEMA: dict[str, Any] = {
                         "annual_fee_thb": {"type": ["number", "null"]},
                         "reason_th": {"type": "string"},
                         "reason_en": {"type": ["string", "null"]},
+                        # POST_V1 §3 — not required (backward compat with older
+                        # model responses); server unions stack-level ids into
+                        # the top-level `cited_promo_ids` after validation.
+                        "cited_promo_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
                     },
                     "required": [
                         "card_id",
@@ -109,6 +122,13 @@ SELECTOR_TOOL_SCHEMA: dict[str, Any] = {
             "rationale_th": {"type": "string", "maxLength": 500},
             "rationale_en": {"type": ["string", "null"]},
             "warnings": {"type": "array", "items": {"type": "string"}},
+            # Top-level optional mirror of the union of stack-item citations.
+            # The server recomputes this from stack items; if the LLM provides
+            # it we use it only as a redundant signal.
+            "cited_promo_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
         },
         "required": [
             "stack",
@@ -207,8 +227,24 @@ def _build_result_from_payload(
     llm_model: str,
     fallback: bool,
 ) -> SelectorResult:
-    """Coerce tool payload into SelectorResult — mirrors server-side validation."""
+    """Coerce tool payload into SelectorResult — mirrors server-side validation.
+
+    Stack items whose tool payload includes `cited_promo_ids` keep them through
+    the `SelectorStackItem` model (Pydantic field defaults to []). The route
+    handler applies server-side validation against the live snapshot and
+    populates the top-level `cited_promo_ids` union.
+    """
     stack = [SelectorStackItem.model_validate(it) for it in payload.get("stack", [])]
+    # Prefer top-level cited_promo_ids if provided by the LLM; otherwise union
+    # from stack items. Route handler re-unions + validates afterwards.
+    top_level_cited = list(payload.get("cited_promo_ids", []) or [])
+    if not top_level_cited:
+        seen: set[str] = set()
+        for item in stack:
+            for pid in item.cited_promo_ids:
+                if pid not in seen:
+                    seen.add(pid)
+                    top_level_cited.append(pid)
     return SelectorResult(
         session_id="anthropic",  # overwritten by the route handler
         stack=stack,
@@ -225,6 +261,7 @@ def _build_result_from_payload(
         llm_model=llm_model,
         fallback=fallback,
         partial_unlock=False,
+        cited_promo_ids=top_level_cited,
     )
 
 
@@ -254,12 +291,46 @@ class AnthropicProvider:
         client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=0)
 
         cached_context = _serialize_context(context)
+        # POST_V1 §3 Tier A (2026-04-22): second cached block carrying the active
+        # promo snapshot. When the feature flag is OFF upstream, `active_promos`
+        # is None and we skip the block entirely; when it's a degraded snapshot,
+        # the serializer emits a sentinel telling the LLM not to cite any promo.
+        from loftly.selector.promo_snapshot import serialize_snapshot_for_prompt
+
+        promos_block: str | None = None
+        if context.active_promos is not None:
+            promos_block = serialize_snapshot_for_prompt(context.active_promos)
+
         user_profile = json.dumps(
             input.model_dump(mode="json"),
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
         )
+
+        # Two cache_control:ephemeral entries still form a single cache prefix.
+        # Keeping the catalog block first + promos second means a new promo
+        # sync only invalidates the tail block, preserving the (hotter)
+        # catalog-cache hit rate.
+        system_blocks: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": _SYSTEM_PROMPT,
+            },
+            {
+                "type": "text",
+                "text": f"### CARD CATALOG + VALUATIONS\n{cached_context}",
+                "cache_control": {"type": "ephemeral"},
+            },
+        ]
+        if promos_block is not None:
+            system_blocks.append(
+                {
+                    "type": "text",
+                    "text": f"### ACTIVE PROMOS\n{promos_block}",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            )
 
         # Structured tool-use call. Cached block sits right before the
         # per-request user profile so the prefix stays byte-stable across
@@ -272,17 +343,7 @@ class AnthropicProvider:
         response = await cast(Any, client.messages.create)(
             model=SONNET_MODEL,
             max_tokens=2_000,
-            system=[
-                {
-                    "type": "text",
-                    "text": _SYSTEM_PROMPT,
-                },
-                {
-                    "type": "text",
-                    "text": f"### CARD CATALOG + VALUATIONS\n{cached_context}",
-                    "cache_control": {"type": "ephemeral"},
-                },
-            ],
+            system=system_blocks,
             tools=[SELECTOR_TOOL_SCHEMA],
             tool_choice={"type": "tool", "name": "return_selector_stack"},
             messages=[
