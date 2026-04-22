@@ -42,6 +42,20 @@ _DISCOUNT_VALUE_RE = re.compile(
     r"(?P<amount>\d+(?:,\d{3})*(?:\.\d+)?)\s*(?P<unit>%|baht|thb|points?|x|เท่า)",
     re.IGNORECASE,
 )
+
+# Normalize regex-captured unit strings to the enum values allowed by the
+# `promos_discount_unit_check` CHECK constraint (migration 006): thb |
+# percent | points | x_multiplier. Unknown units fall through as None so
+# the row still inserts cleanly — amount alone is still useful downstream.
+_DISCOUNT_UNIT_NORMALIZATION: dict[str, str] = {
+    "%": "percent",
+    "baht": "thb",
+    "thb": "thb",
+    "point": "points",
+    "points": "points",
+    "x": "x_multiplier",
+    "เท่า": "x_multiplier",
+}
 _CATEGORY_SLUG_MAP = {
     "dining-restaurants": "dining",
     "shopping": "shopping",
@@ -82,7 +96,8 @@ def _parse_discount_value(raw: str | None) -> tuple[Decimal | None, str | None]:
     if match is None:
         return None, None
     amount = Decimal(match.group("amount").replace(",", ""))
-    unit = match.group("unit").lower()
+    captured_unit = match.group("unit").lower()
+    unit = _DISCOUNT_UNIT_NORMALIZATION.get(captured_unit)
     return amount, unit
 
 

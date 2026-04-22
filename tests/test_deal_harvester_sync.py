@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -85,7 +86,9 @@ async def test_sync_happy_path(seeded_db: object, httpx_mock: HTTPXMock) -> None
         )
         assert promo.discount_amount is not None
         assert float(promo.discount_amount) == 15.0
-        assert promo.discount_unit == "%"
+        # Unit normalized to the enum allowed by promos_discount_unit_check
+        # (migration 006): "percent", not the raw "%" captured by the regex.
+        assert promo.discount_unit == "percent"
         assert promo.category == "dining"
         mapped_count = len(
             list(
@@ -315,6 +318,20 @@ async def test_sync_last_endpoint_returns_latest(seeded_client: Any, httpx_mock:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["source"] == "deal_harvester"
+
+
+async def test_sync_parse_discount_value_normalizes_unit_to_enum() -> None:
+    """Captured units must map to the CHECK-constraint enum, not raw strings."""
+    from loftly.jobs.deal_harvester_sync import _parse_discount_value
+
+    assert _parse_discount_value("25%") == (Decimal("25"), "percent")
+    assert _parse_discount_value("100 baht") == (Decimal("100"), "thb")
+    assert _parse_discount_value("1,000 THB") == (Decimal("1000"), "thb")
+    assert _parse_discount_value("2 เท่า") == (Decimal("2"), "x_multiplier")
+    assert _parse_discount_value("5x") == (Decimal("5"), "x_multiplier")
+    assert _parse_discount_value("500 points") == (Decimal("500"), "points")
+    assert _parse_discount_value("no number") == (None, None)
+    assert _parse_discount_value(None) == (None, None)
 
 
 async def test_sync_maps_promo_type_from_discount_type(
