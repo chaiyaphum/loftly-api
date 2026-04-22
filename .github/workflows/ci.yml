@@ -15,7 +15,11 @@ jobs:
     timeout-minutes: 10
     env:
       LOFTLY_ENV: test
-      DATABASE_URL: sqlite+aiosqlite:///:memory:
+      # NOTE: must be quoted — the value contains multiple colons, which
+      # GitHub's YAML loader would otherwise parse as nested mapping values,
+      # rejecting the entire file (0s run, falls back to showing the path as
+      # the workflow name, skips downstream `deploy`).
+      DATABASE_URL: "sqlite+aiosqlite:///:memory:"
       JWT_SIGNING_KEY: ci-secret
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +56,9 @@ jobs:
     # not a list — always returned false), so it was silently skipping.
     env:
       LOFTLY_ENV: test
-      DATABASE_URL: sqlite+aiosqlite:///:memory:
+      # Quoted — see note in `check` job above. Multi-colon URI strings must
+      # be YAML strings, not bare scalars.
+      DATABASE_URL: "sqlite+aiosqlite:///:memory:"
       JWT_SIGNING_KEY: ci-secret
       LOFTLY_EVAL_MIN_RECALL: "0.75"
     steps:
