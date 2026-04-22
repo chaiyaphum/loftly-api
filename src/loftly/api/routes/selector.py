@@ -1032,19 +1032,37 @@ async def archive_selector_session(
 )
 async def get_session_result(
     session_id: uuid.UUID,
-    token: str = Query(..., description="Signed selector retrieval token"),
+    token: str | None = Query(
+        None, description="Signed selector retrieval token (optional — session_id UUIDv4 entropy is the default gate)"
+    ),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> SelectorResult:
-    """Verify token, look up the saved row, return the stored envelope."""
-    token_sub = _verify_session_token(token, settings)
-    if token_sub != session_id:
-        raise LoftlyError(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            code="invalid_token",
-            message_en="Token does not grant access to this session.",
-            message_th="โทเคนไม่มีสิทธิ์เข้าถึง session นี้",
-        )
+    """Look up the saved row by `session_id`.
+
+    Token handling:
+      - When provided: verify the signed JWT and enforce its `sub` claim
+        matches the URL `session_id`. This is the path magic-links take
+        to grant auth'd access to an anon session.
+      - When absent: rely on `session_id` UUIDv4 entropy (122 bits) as the
+        default access gate. The flow is: POST /v1/selector creates the
+        session and immediately returns the `session_id` to the creator;
+        the creator redirects to `/selector/results/{id}` without a token
+        round-trip. Bookmarkable + shareable by design (§WF-3).
+
+    Future tightening (if needed): require token when `row.user_id` is
+    non-null (authed session) and treat 404 vs 401 differently. For now,
+    MVP staging is anon-first and the session_id IS the capability.
+    """
+    if token is not None:
+        token_sub = _verify_session_token(token, settings)
+        if token_sub != session_id:
+            raise LoftlyError(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                code="invalid_token",
+                message_en="Token does not grant access to this session.",
+                message_th="โทเคนไม่มีสิทธิ์เข้าถึง session นี้",
+            )
     row = (
         (await session.execute(select(SelectorSession).where(SelectorSession.id == session_id)))
         .scalars()
