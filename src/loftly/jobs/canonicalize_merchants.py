@@ -19,21 +19,30 @@ canonicalization pipeline`. Finds promos that don't yet have a row in
 
 Observability mirrors `deal_harvester_sync` — a `sync_runs` row bookends
 the run, structlog events tag each step, failures do NOT abort the batch.
+
+LLM step degrades gracefully: when `ANTHROPIC_API_KEY` is unset (or is the
+"stub"/"test" sentinel), step 4 is skipped with a warning and unmatched
+candidates flow into the admin review queue as orphan rows. This mirrors
+`AnthropicProvider._should_use_real_anthropic()` in `ai/providers/anthropic.py`.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loftly.ai.providers.anthropic import _should_use_real_anthropic
+from loftly.ai.providers.anthropic_haiku import HAIKU_MODEL
 from loftly.core.logging import get_logger
+from loftly.core.settings import get_settings
 from loftly.db.engine import get_sessionmaker
 from loftly.db.models.audit import SyncRun
 from loftly.db.models.merchant import (
@@ -41,10 +50,20 @@ from loftly.db.models.merchant import (
     PromoMerchantCanonicalMap,
 )
 from loftly.db.models.promo import Promo
+from loftly.prompts.merchant_canonicalizer import load as load_prompt
+from loftly.schemas.merchants import (
+    CandidatePromo,
+    CanonicalizerResult,
+    MerchantCanonicalizerInput,
+    MerchantCanonicalizerOutput,
+)
 
 log = get_logger(__name__)
 
-_SOURCE = "canonicalize_merchants"
+# Per the acceptance contract: the source tag on sync_runs rows is
+# `merchant_canonicalizer` to mirror Prompt 8's slug. Tests query on this
+# string so do not rename without updating the route + tests in lockstep.
+_SOURCE = "merchant_canonicalizer"
 _BATCH_SIZE = 20
 _FUZZY_THRESHOLD = 0.85
 _REVIEW_CONFIDENCE_THRESHOLD = 0.80
@@ -169,7 +188,13 @@ async def _write_map_row(
     confidence: float,
     method: str,
 ) -> None:
-    """Insert a `promos_merchant_canonical_map` row; idempotent on promo_id."""
+    """Insert a `promos_merchant_canonical_map` row; idempotent on promo_id.
+
+    `reviewed_at` is intentionally left NULL — the admin review queue
+    (`GET /v1/admin/merchants/mapping-queue`) filters on
+    `reviewed_at IS NULL` to surface items that still need human QA. An
+    admin action flips it to `now()` when the mapping is approved.
+    """
     existing = await session.get(PromoMerchantCanonicalMap, promo_id)
     if existing is not None:
         return
@@ -182,27 +207,276 @@ async def _write_map_row(
     session.add(row)
 
 
+def _serialize_canonicals(canonicals: list[MerchantCanonical]) -> str:
+    """Pack canonical merchants into the stable JSON block Prompt 8 expects.
+
+    Sorted by id so cache prefixes stay byte-stable across calls — see
+    `anthropic.py::_serialize_context` for the same discipline.
+    """
+    payload = [
+        {
+            "id": str(m.id),
+            "slug": m.slug,
+            "display_name_th": m.display_name_th,
+            "display_name_en": m.display_name_en,
+            "alt_names": list(m.alt_names or []),
+            "merchant_type": m.merchant_type,
+        }
+        for m in sorted(canonicals, key=lambda m: str(m.id))
+        if m.status == "active"
+    ]
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _serialize_candidates(candidates: list[CandidatePromo]) -> str:
+    return json.dumps(
+        [c.model_dump(mode="json") for c in candidates],
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+def _parse_llm_response(raw: str) -> MerchantCanonicalizerOutput:
+    """Parse Haiku's JSON response. Tolerates stray whitespace + trailing prose."""
+    text = raw.strip()
+    # Claude occasionally wraps in ```json … ```. Strip before parsing.
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    payload = json.loads(text)
+    return MerchantCanonicalizerOutput.model_validate(payload)
+
+
+async def _call_haiku(
+    candidates: list[CandidatePromo],
+    canonicals: list[MerchantCanonical],
+) -> MerchantCanonicalizerOutput:
+    """Invoke Prompt 8 on a batch of ≤ _BATCH_SIZE candidates.
+
+    Imports the Anthropic SDK lazily — matches `ai/providers/anthropic.py`
+    so stub/test deploys don't pay the SDK import cost.
+    """
+    from anthropic import AsyncAnthropic
+
+    settings = get_settings()
+    prompt = load_prompt()
+    template = prompt.text
+    # The prompt lives as a single Markdown doc with {candidates} +
+    # {canonical_merchants} placeholders. Because the doc also contains
+    # literal `{...}` JSON-schema examples, we can't use `str.format_map`
+    # (it'd try to interpret every brace). Use plain token replacement.
+    candidates_json = _serialize_candidates(candidates)
+    canonicals_json = _serialize_canonicals(canonicals)
+    filled = template.replace("{candidates}", candidates_json).replace(
+        "{canonical_merchants}", canonicals_json
+    )
+    # Split: the "## System" section becomes the system prompt (cached
+    # prefix), the "## User" section becomes the per-call message.
+    system_block, _, user_block = filled.partition("## User")
+    system_text = system_block.strip()
+    user_text = user_block.strip() or filled.strip()
+
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=0)
+    response: Any = await cast(Any, client.messages.create)(
+        model=HAIKU_MODEL,
+        max_tokens=2_000,
+        system=[
+            {
+                "type": "text",
+                "text": system_text,
+                "cache_control": {"type": "ephemeral"},
+            },
+        ],
+        messages=[{"role": "user", "content": user_text}],
+    )
+
+    usage = response.usage
+    input_tokens = getattr(usage, "input_tokens", 0) or 0
+    output_tokens = getattr(usage, "output_tokens", 0) or 0
+    cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+    log.info(
+        "merchant_canonicalizer_haiku_call",
+        model=HAIKU_MODEL,
+        prompt_version=prompt.version,
+        prompt_slug=prompt.slug,
+        batch=len(candidates),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read,
+    )
+
+    # Haiku returns a text block (no tool-use in this prompt — strict JSON).
+    for block in response.content:
+        btype = getattr(block, "type", None)
+        if btype == "text":
+            return _parse_llm_response(getattr(block, "text", "") or "")
+    raise ValueError("Haiku response did not contain a text block.")
+
+
 async def _run_llm_batch(
     session: AsyncSession,
     candidates: list[Promo],
     canonicals: list[MerchantCanonical],
-) -> dict[uuid.UUID, tuple[uuid.UUID | None, float, str]]:
+) -> MerchantCanonicalizerOutput | None:
     """Invoke Prompt 8 on a batch of ≤ _BATCH_SIZE candidates.
 
-    Returns a map: promo_id → (merchant_id | None, confidence, method).
-    In dev/test we skip LLM calls (Anthropic provider lazy-loaded) and
-    return empty — the records fall into the admin-review queue.
-
-    TODO: wire AnthropicHaikuProvider.canonicalize_merchants once the
-    provider gains a typed batch method (tracked in follow-up PR).
+    Returns the parsed `MerchantCanonicalizerOutput`, or None when the
+    Anthropic key is not configured (dev/test stub mode). The caller is
+    responsible for applying the results to the DB.
     """
-    _ = session, candidates, canonicals  # placeholders until provider wired
-    log.info(
-        "canonicalize_llm_stub",
-        batch=len(candidates),
-        reason="haiku_merchant_canonicalizer_not_yet_wired",
+    _ = session  # the LLM call itself is read-only; writes happen upstream
+    if not _should_use_real_anthropic():
+        log.warning(
+            "merchant_canonicalizer_llm_skipped",
+            batch=len(candidates),
+            reason="anthropic_api_key_not_configured",
+        )
+        return None
+
+    batch_input = MerchantCanonicalizerInput(
+        candidates=[
+            CandidatePromo(
+                promo_id=str(p.id),
+                raw_merchant_name=p.merchant_name or "",
+                promo_category=p.category,
+                promo_title_th=p.title_th or "",
+            )
+            for p in candidates
+        ]
     )
-    return {}
+    return await _call_haiku(batch_input.candidates, canonicals)
+
+
+def _canonical_by_id(
+    canonicals: list[MerchantCanonical], merchant_id: str
+) -> MerchantCanonical | None:
+    try:
+        target_uuid = uuid.UUID(merchant_id)
+    except (TypeError, ValueError):
+        return None
+    for m in canonicals:
+        if m.id == target_uuid:
+            return m
+    return None
+
+
+async def _apply_llm_result(
+    session: AsyncSession,
+    *,
+    promo: Promo,
+    result: CanonicalizerResult,
+    canonicals: list[MerchantCanonical],
+    counters: dict[str, int],
+) -> None:
+    """Translate a single `CanonicalizerResult` into DB writes.
+
+    `counters` is mutated in-place — the caller owns the aggregate counts
+    so the structlog summary event can surface them all together.
+    """
+    action = result.action
+    confidence = float(result.confidence)
+
+    if action == "match":
+        if not result.merchant_id:
+            log.warning(
+                "merchant_canonicalizer_malformed_match",
+                promo_id=str(promo.id),
+                reason="missing_merchant_id",
+            )
+            counters["failed"] += 1
+            return
+        merchant = _canonical_by_id(canonicals, result.merchant_id)
+        if merchant is None:
+            log.warning(
+                "merchant_canonicalizer_unknown_merchant_id",
+                promo_id=str(promo.id),
+                merchant_id=result.merchant_id,
+            )
+            counters["failed"] += 1
+            return
+        await _write_map_row(
+            session,
+            promo_id=promo.id,
+            merchant_id=merchant.id,
+            confidence=confidence,
+            method="llm",
+        )
+        counters["llm_matched"] += 1
+        if confidence < _REVIEW_CONFIDENCE_THRESHOLD:
+            counters["review_queue"] += 1
+        return
+
+    if action == "new":
+        proposed = result.proposed
+        if proposed is None:
+            log.warning(
+                "merchant_canonicalizer_malformed_new",
+                promo_id=str(promo.id),
+                reason="missing_proposed",
+            )
+            counters["failed"] += 1
+            return
+        # Reject duplicate slug to preserve the "new-merchant slug
+        # uniqueness 100%" acceptance bar from Prompt 8 §Evaluation.
+        if any(m.slug == proposed.slug for m in canonicals):
+            log.warning(
+                "merchant_canonicalizer_new_slug_collision",
+                promo_id=str(promo.id),
+                slug=proposed.slug,
+            )
+            counters["failed"] += 1
+            return
+        merchant = MerchantCanonical(
+            slug=proposed.slug,
+            display_name_th=proposed.display_name_th,
+            display_name_en=proposed.display_name_en,
+            merchant_type=proposed.merchant_type,
+            alt_names=list(proposed.alt_names),
+            status="active",
+        )
+        session.add(merchant)
+        await session.flush()
+        canonicals.append(merchant)  # make visible to the rest of this batch
+        await _write_map_row(
+            session,
+            promo_id=promo.id,
+            merchant_id=merchant.id,
+            confidence=confidence,
+            method="llm",
+        )
+        counters["llm_new"] += 1
+        if confidence < _REVIEW_CONFIDENCE_THRESHOLD:
+            counters["review_queue"] += 1
+        return
+
+    # action == "uncertain"
+    top = result.top_candidates or []
+    if not top:
+        counters["llm_uncertain"] += 1
+        counters["review_queue"] += 1
+        return
+    best = max(top, key=lambda c: c.confidence)
+    merchant = _canonical_by_id(canonicals, best.merchant_id)
+    if merchant is None:
+        log.warning(
+            "merchant_canonicalizer_uncertain_unknown_candidate",
+            promo_id=str(promo.id),
+            candidate_merchant_id=best.merchant_id,
+        )
+        counters["llm_uncertain"] += 1
+        counters["review_queue"] += 1
+        return
+    # Write the top-candidate pointer with the low LLM confidence so the
+    # admin queue (reviewed_at IS NULL) can surface + approve/reject it.
+    await _write_map_row(
+        session,
+        promo_id=promo.id,
+        merchant_id=merchant.id,
+        confidence=float(best.confidence),
+        method="llm",
+    )
+    counters["llm_uncertain"] += 1
+    counters["review_queue"] += 1
 
 
 async def run_canonicalization(
@@ -223,11 +497,16 @@ async def run_canonicalization(
         run_row_id = run.id
         await session.commit()
 
-    upstream_count = 0
-    exact_count = 0
-    fuzzy_count = 0
-    llm_count = 0
-    review_queue_count = 0
+    counters: dict[str, int] = {
+        "candidates": 0,
+        "exact_matched": 0,
+        "fuzzy_matched": 0,
+        "llm_matched": 0,
+        "llm_new": 0,
+        "llm_uncertain": 0,
+        "failed": 0,
+        "review_queue": 0,
+    }
     error_message: str | None = None
     status = "success"
 
@@ -237,7 +516,7 @@ async def run_canonicalization(
                 (await session.execute(select(MerchantCanonical))).scalars().all()
             )
             unmapped = await _unmapped_promos(session)
-            upstream_count = len(unmapped)
+            counters["candidates"] = len(unmapped)
 
             llm_queue: list[Promo] = []
             for promo in unmapped:
@@ -255,7 +534,7 @@ async def run_canonicalization(
                         confidence=1.0,
                         method="exact",
                     )
-                    exact_count += 1
+                    counters["exact_matched"] += 1
                     continue
 
                 # Step 3: fuzzy match.
@@ -269,36 +548,56 @@ async def run_canonicalization(
                         confidence=score,
                         method="fuzzy",
                     )
-                    fuzzy_count += 1
+                    counters["fuzzy_matched"] += 1
                     if score < _REVIEW_CONFIDENCE_THRESHOLD:
-                        review_queue_count += 1
+                        counters["review_queue"] += 1
                     continue
 
                 # Step 4: queue for LLM.
                 llm_queue.append(promo)
 
             # Step 5: batch the LLM call(s) — ≤ 20 per batch.
+            promo_by_id = {str(p.id): p for p in llm_queue}
             for i in range(0, len(llm_queue), _BATCH_SIZE):
                 batch = llm_queue[i : i + _BATCH_SIZE]
-                results = await _run_llm_batch(session, batch, canonicals)
-                for promo_id, (merchant_id, confidence, _method) in results.items():
-                    if merchant_id is None:
-                        review_queue_count += 1
-                        continue
-                    await _write_map_row(
-                        session,
-                        promo_id=promo_id,
-                        merchant_id=merchant_id,
-                        confidence=confidence,
-                        method="llm",
+                try:
+                    output = await _run_llm_batch(session, batch, canonicals)
+                except Exception as exc:  # per-batch isolation by design
+                    log.exception(
+                        "merchant_canonicalizer_batch_failed",
+                        batch_index=i // _BATCH_SIZE,
+                        batch_size=len(batch),
+                        error=f"{type(exc).__name__}: {exc}",
                     )
-                    llm_count += 1
-                    if confidence < _REVIEW_CONFIDENCE_THRESHOLD:
-                        review_queue_count += 1
+                    counters["failed"] += len(batch)
+                    counters["review_queue"] += len(batch)
+                    continue
+                if output is None:
+                    # Stub path: no key configured. Candidates remain
+                    # unmapped — admin queue picks them up on the next
+                    # pass as unreviewed orphans.
+                    counters["review_queue"] += len(batch)
+                    continue
+                for result in output.results:
+                    target = promo_by_id.get(result.promo_id)
+                    if target is None:
+                        log.warning(
+                            "merchant_canonicalizer_unknown_promo_in_response",
+                            promo_id=result.promo_id,
+                        )
+                        counters["failed"] += 1
+                        continue
+                    await _apply_llm_result(
+                        session,
+                        promo=target,
+                        result=result,
+                        canonicals=canonicals,
+                        counters=counters,
+                    )
 
             await session.commit()
     except Exception as exc:
-        log.exception("canonicalize_merchants_failed")
+        log.exception("merchant_canonicalizer_failed")
         error_message = f"{type(exc).__name__}: {exc}"[:500]
         status = "failed"
 
@@ -310,19 +609,36 @@ async def run_canonicalization(
         )
         run.status = status
         run.finished_at = datetime.now(UTC)
-        run.upstream_count = upstream_count
-        run.inserted_count = exact_count + fuzzy_count + llm_count
-        run.updated_count = 0
-        run.mapping_queue_added = review_queue_count
+        # Aggregate counts — the SyncRun schema is shared with
+        # deal_harvester_sync so we reuse existing columns:
+        #   upstream_count  = candidates considered
+        #   inserted_count  = new map rows written (exact + fuzzy + llm_*)
+        #   updated_count   = new canonical merchants created (action='new')
+        #   deactivated_count = hard failures (malformed / unknown id)
+        #   mapping_queue_added = rows left for admin review (reviewed_at IS NULL)
+        run.upstream_count = counters["candidates"]
+        run.inserted_count = (
+            counters["exact_matched"]
+            + counters["fuzzy_matched"]
+            + counters["llm_matched"]
+            + counters["llm_new"]
+            + counters["llm_uncertain"]
+        )
+        run.updated_count = counters["llm_new"]
+        run.deactivated_count = counters["failed"]
+        run.mapping_queue_added = counters["review_queue"]
         run.error_message = error_message
         await session.commit()
         log.info(
-            "canonicalize_merchants_done",
-            upstream=upstream_count,
-            exact=exact_count,
-            fuzzy=fuzzy_count,
-            llm=llm_count,
-            review_queue=review_queue_count,
+            "merchant_canonicalizer_done",
+            candidates=counters["candidates"],
+            exact_matched=counters["exact_matched"],
+            fuzzy_matched=counters["fuzzy_matched"],
+            llm_matched=counters["llm_matched"],
+            llm_new=counters["llm_new"],
+            llm_uncertain=counters["llm_uncertain"],
+            failed=counters["failed"],
+            review_queue=counters["review_queue"],
             status=status,
         )
         return {
@@ -331,9 +647,14 @@ async def run_canonicalization(
             "started_at": run.started_at.isoformat() if run.started_at else None,
             "finished_at": run.finished_at.isoformat() if run.finished_at else None,
             "status": run.status,
-            "upstream_count": run.upstream_count,
-            "inserted_count": run.inserted_count,
-            "mapping_queue_added": run.mapping_queue_added,
+            "candidates": counters["candidates"],
+            "exact_matched": counters["exact_matched"],
+            "fuzzy_matched": counters["fuzzy_matched"],
+            "llm_matched": counters["llm_matched"],
+            "llm_new": counters["llm_new"],
+            "llm_uncertain": counters["llm_uncertain"],
+            "failed": counters["failed"],
+            "review_queue": counters["review_queue"],
             "error_message": run.error_message,
         }
 
