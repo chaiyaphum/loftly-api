@@ -489,19 +489,22 @@ async def chat(
     stored_stack: list[dict[str, Any]] = list((row.output or {}).get("stack", []))
     rationale_th = str((row.output or {}).get("rationale_th", ""))
     stack_json = _json.dumps(stored_stack, ensure_ascii=False)
-    prompt = chat_prompt.load(
-        {  # type: ignore[arg-type]
+    # `selector_context` + `cached_result` mirror the §Prompt 5 placeholder
+    # names. In PR-8 we wired the route to the richest data available at this
+    # point: the stored rationale_th (context) + the cached stack JSON (result).
+    prompt = chat_prompt.render(
+        {
             "locale": original_input.locale,
-            "rationale_th": rationale_th,
-            "stack_json": stack_json,
-            "category": category,
-            "question": body.question,
+            "classifier_category": category,
+            "selector_context": rationale_th,
+            "cached_result": stack_json,
+            "question_th": body.question,
         }
     )
 
     # Cost cap — pre-flight estimate. Over the cap → skip the Haiku call and
     # surface the static fallback. No billable work.
-    estimated_thb = _estimate_chat_cost_thb(prompt["system"], prompt["user"])  # type: ignore[index]
+    estimated_thb = _estimate_chat_cost_thb(prompt.system, prompt.user)
     answer_th = _HAIKU_FALLBACK_TH
     answer_en: str | None = _HAIKU_FALLBACK_EN
     if estimated_thb > _CHAT_COST_CAP_THB:
@@ -514,7 +517,7 @@ async def chat(
         # 9) Haiku call under a 5s timeout. Any failure → static fallback.
         try:
             reply = await asyncio.wait_for(
-                _call_haiku_chat(prompt["system"], prompt["user"]),  # type: ignore[index]
+                _call_haiku_chat(prompt.system, prompt.user),
                 timeout=_HAIKU_TIMEOUT_SEC,
             )
             answer_th = reply.get("answer_th") or _HAIKU_FALLBACK_TH
