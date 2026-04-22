@@ -33,6 +33,7 @@ from sqlalchemy.orm import joinedload
 from loftly.api.auth import get_current_admin_id
 from loftly.api.errors import LoftlyError
 from loftly.api.jwt_util import decode_access_token
+from loftly.core.cache import get_cache
 from loftly.core.settings import Settings, get_settings
 from loftly.db.audit import log_action
 from loftly.db.engine import get_session
@@ -41,10 +42,17 @@ from loftly.db.models.audit import AuditLog
 from loftly.db.models.bank import Bank as BankModel
 from loftly.db.models.card import Card as CardModel
 from loftly.db.models.loyalty_currency import LoyaltyCurrency
+from loftly.db.models.merchant import (
+    MerchantCanonical as MerchantCanonicalModel,
+)
+from loftly.db.models.merchant import (
+    PromoMerchantCanonicalMap,
+)
 from loftly.db.models.promo import Promo, promo_card_map
 from loftly.db.models.user import User
 from loftly.schemas.cards import BankMini, Card, CardList, Currency, SignupBonus
 from loftly.schemas.common import Pagination
+from loftly.schemas.merchants import AdminMergeRequest, AdminSplitRequest
 
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
 
@@ -2029,3 +2037,499 @@ async def manual_catalog_upload(
     )
     await session.commit()
     return result.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Merchant canonical admin — merge / split / mapping review.
+# See `mvp/API_CONTRACT.md §merchants` + `POST_V1.md §9.1` (Q18 ratified
+# 2026-04-22). The read surface lives in `routes/merchants.py`; admin-only
+# writes live here so they pick up the shared `get_current_admin_id` guard.
+# ---------------------------------------------------------------------------
+
+
+async def _invalidate_merchant_page_cache(slug: str) -> None:
+    """Drop `/v1/merchants/{slug}` cache entries after a merge/split.
+
+    The public route keys by `merchants:page:anon:{slug}`. Our tiny cache
+    interface has no glob-delete, so we drop the one known anon key; when
+    authed variants land (per TODO in merchants.py), extend this helper.
+    """
+    cache = get_cache()
+    await cache.delete(f"merchants:page:anon:{slug}")
+
+
+def _is_postgres(session: AsyncSession) -> bool:
+    bind = session.get_bind()
+    return bool(bind is not None and bind.dialect.name == "postgresql")
+
+
+async def _load_merchant_for_update(
+    session: AsyncSession, merchant_id: uuid.UUID
+) -> MerchantCanonicalModel | None:
+    """SELECT ... FOR UPDATE when on Postgres; plain SELECT on sqlite/tests."""
+    stmt = select(MerchantCanonicalModel).where(MerchantCanonicalModel.id == merchant_id)
+    if _is_postgres(session):
+        stmt = stmt.with_for_update()
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+@router.post(
+    "/merchants/{merchant_id}/merge",
+    summary="Absorb a source canonical merchant into this one",
+)
+async def admin_merge_merchant(
+    merchant_id: uuid.UUID,
+    payload: AdminMergeRequest,
+    admin_id: uuid.UUID = Depends(get_current_admin_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Merge `source_id` into `merchant_id` (target). Atomic.
+
+    Rewrites every `promos_merchant_canonical_map` row from source -> target,
+    flips the source row to `status='merged'` + `merged_into_id=target.id`,
+    and writes one `audit_log` entry. Idempotent when the source is already
+    merged into this same target.
+    """
+    try:
+        source_id = uuid.UUID(payload.source_id)
+    except ValueError as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="invalid_source_id",
+            message_en="source_id must be a UUID.",
+            message_th="รหัสต้นทางต้องเป็น UUID",
+        ) from exc
+
+    if source_id == merchant_id:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="source_equals_target",
+            message_en="source_id must differ from the target merchant id.",
+            message_th="รหัสต้นทางต้องไม่ตรงกับปลายทาง",
+        )
+
+    target = await _load_merchant_for_update(session, merchant_id)
+    if target is None:
+        raise LoftlyError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="merchant_not_found",
+            message_en=f"No canonical merchant with id {merchant_id}.",
+            message_th="ไม่พบร้านค้าปลายทาง",
+        )
+    source = await _load_merchant_for_update(session, source_id)
+    if source is None:
+        raise LoftlyError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="source_not_found",
+            message_en=f"No canonical merchant with id {source_id}.",
+            message_th="ไม่พบร้านค้าต้นทาง",
+        )
+
+    # Idempotent: already merged into this target -> 200 with already_merged.
+    if source.status == "merged" and source.merged_into_id == target.id:
+        return {"ok": True, "already_merged": True, "promo_count": 0}
+
+    if source.status != "active":
+        raise LoftlyError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="source_not_active",
+            message_en=f"Source merchant is {source.status}, not active.",
+            message_th="ร้านค้าต้นทางไม่อยู่ในสถานะใช้งาน",
+        )
+    if target.status != "active":
+        raise LoftlyError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="target_not_active",
+            message_en=f"Target merchant is {target.status}, not active.",
+            message_th="ร้านค้าปลายทางไม่อยู่ในสถานะใช้งาน",
+        )
+
+    # Rewrite map rows. SQLAlchemy emits UPDATE ... WHERE merchant_canonical_id
+    # = source; rowcount tells us how many promos moved.
+    from sqlalchemy import update
+
+    result = await session.execute(
+        update(PromoMerchantCanonicalMap)
+        .where(PromoMerchantCanonicalMap.merchant_canonical_id == source.id)
+        .values(merchant_canonical_id=target.id)
+    )
+    promo_count = int(getattr(result, "rowcount", 0) or 0)
+
+    source.status = "merged"
+    source.merged_into_id = target.id
+
+    await log_action(
+        session,
+        actor_id=admin_id,
+        action="merchant.merge",
+        subject_type="merchant_canonical",
+        subject_id=target.id,
+        metadata={
+            "target_id": str(target.id),
+            "source_id": str(source.id),
+            "reason": payload.reason,
+            "promo_count": promo_count,
+        },
+    )
+    await session.commit()
+
+    await _invalidate_merchant_page_cache(source.slug)
+    await _invalidate_merchant_page_cache(target.slug)
+
+    return {"ok": True, "promo_count": promo_count}
+
+
+@router.post(
+    "/merchants/{merchant_id}/split",
+    summary="Split a canonical merchant by per-promo reassignment",
+)
+async def admin_split_merchant(
+    merchant_id: uuid.UUID,
+    payload: AdminSplitRequest,
+    admin_id: uuid.UUID = Depends(get_current_admin_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Split `merchant_id` by moving listed promos to a (new|existing) canonical.
+
+    Unlike merge the source stays `active` — only the chosen promos relocate.
+    The new target can be created inline via `new_merchant` or referenced by
+    id via `new_merchant_id`.
+    """
+    source = await _load_merchant_for_update(session, merchant_id)
+    if source is None:
+        raise LoftlyError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="merchant_not_found",
+            message_en=f"No canonical merchant with id {merchant_id}.",
+            message_th="ไม่พบร้านค้าต้นทาง",
+        )
+    if source.status != "active":
+        raise LoftlyError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="source_not_active",
+            message_en=f"Source merchant is {source.status}, not active.",
+            message_th="ร้านค้าต้นทางไม่อยู่ในสถานะใช้งาน",
+        )
+
+    if payload.new_merchant is None and not payload.new_merchant_id:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="missing_target",
+            message_en="Provide either new_merchant or new_merchant_id.",
+            message_th="ต้องระบุ new_merchant หรือ new_merchant_id",
+        )
+    if payload.new_merchant is not None and payload.new_merchant_id:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="ambiguous_target",
+            message_en="Provide only one of new_merchant or new_merchant_id.",
+            message_th="ระบุได้เพียงอย่างเดียว (ใหม่/ที่มีอยู่)",
+        )
+
+    # Resolve or create the destination canonical.
+    if payload.new_merchant is not None:
+        nm = payload.new_merchant
+        existing = (
+            await session.execute(
+                select(MerchantCanonicalModel).where(MerchantCanonicalModel.slug == nm.slug)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise LoftlyError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="slug_conflict",
+                message_en=f"Slug '{nm.slug}' already exists.",
+                message_th="slug นี้มีอยู่แล้ว",
+            )
+        new_row = MerchantCanonicalModel(
+            slug=nm.slug,
+            display_name_th=nm.display_name_th,
+            display_name_en=nm.display_name_en,
+            category_default=nm.category_default,
+            alt_names=list(nm.alt_names or []),
+            logo_url=nm.logo_url,
+            description_th=nm.description_th,
+            description_en=nm.description_en,
+            merchant_type=nm.merchant_type,
+            status="active",
+        )
+        session.add(new_row)
+        await session.flush()
+        target_id = new_row.id
+        target_slug = new_row.slug
+    else:
+        try:
+            target_id = uuid.UUID(str(payload.new_merchant_id))
+        except ValueError as exc:
+            raise LoftlyError(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code="invalid_new_merchant_id",
+                message_en="new_merchant_id must be a UUID.",
+                message_th="new_merchant_id ต้องเป็น UUID",
+            ) from exc
+        target = await _load_merchant_for_update(session, target_id)
+        if target is None:
+            raise LoftlyError(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="target_not_found",
+                message_en=f"No canonical merchant with id {target_id}.",
+                message_th="ไม่พบร้านค้าปลายทาง",
+            )
+        if target.status != "active":
+            raise LoftlyError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="target_not_active",
+                message_en=f"Target merchant is {target.status}, not active.",
+                message_th="ร้านค้าปลายทางไม่อยู่ในสถานะใช้งาน",
+            )
+        if target.id == source.id:
+            raise LoftlyError(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code="source_equals_target",
+                message_en="new_merchant_id must differ from the source merchant.",
+                message_th="รหัสปลายทางต้องไม่ตรงกับต้นทาง",
+            )
+        target_slug = target.slug
+
+    # Parse + validate reassignments.
+    try:
+        promo_ids = [uuid.UUID(str(r["promo_id"])) for r in payload.reassignments]
+    except (KeyError, ValueError) as exc:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="invalid_reassignments",
+            message_en="Each reassignment needs a UUID `promo_id`.",
+            message_th="ต้องระบุ promo_id (UUID) ในแต่ละรายการ",
+        ) from exc
+    if not promo_ids:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="empty_reassignments",
+            message_en="reassignments must contain at least one promo.",
+            message_th="ต้องระบุโปรโมชั่นอย่างน้อยหนึ่งรายการ",
+        )
+
+    # Only rewrite rows that currently point at the source — silently ignore
+    # promos that were never mapped here (admin UI can re-fetch the queue).
+    from sqlalchemy import update
+
+    result = await session.execute(
+        update(PromoMerchantCanonicalMap)
+        .where(
+            PromoMerchantCanonicalMap.promo_id.in_(promo_ids),
+            PromoMerchantCanonicalMap.merchant_canonical_id == source.id,
+        )
+        .values(merchant_canonical_id=target_id)
+    )
+    reassigned = int(getattr(result, "rowcount", 0) or 0)
+
+    await log_action(
+        session,
+        actor_id=admin_id,
+        action="merchant.split",
+        subject_type="merchant_canonical",
+        subject_id=source.id,
+        metadata={
+            "source_id": str(source.id),
+            "new_merchant_id": str(target_id),
+            "reassigned_count": reassigned,
+            "requested_count": len(promo_ids),
+            "reason": payload.reason,
+        },
+    )
+    await session.commit()
+
+    await _invalidate_merchant_page_cache(source.slug)
+    await _invalidate_merchant_page_cache(target_slug)
+
+    return {
+        "ok": True,
+        "new_merchant_id": str(target_id),
+        "reassigned_count": reassigned,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Merchant mapping review queue — promos_merchant_canonical_map entries
+# still awaiting human review (`reviewed_at IS NULL`).
+# ---------------------------------------------------------------------------
+
+
+_REVIEWABLE_METHODS = {"exact", "fuzzy", "llm", "manual"}
+
+
+@router.get(
+    "/merchants/mapping-queue",
+    summary="Unreviewed promo → canonical merchant mappings",
+)
+async def merchant_mapping_queue(
+    _admin_id: uuid.UUID = Depends(get_current_admin_id),
+    session: AsyncSession = Depends(get_session),
+    method: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """Rows in `promos_merchant_canonical_map` where `reviewed_at IS NULL`.
+
+    Sorted by `confidence asc, mapped_at desc` so uncertain/oldest entries
+    float to the top. `method` filter narrows to one canonicalizer path.
+    """
+    if method is not None and method not in _REVIEWABLE_METHODS:
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="invalid_method",
+            message_en=f"method must be one of {sorted(_REVIEWABLE_METHODS)}.",
+            message_th="ค่า method ไม่ถูกต้อง",
+        )
+
+    stmt = (
+        select(PromoMerchantCanonicalMap, MerchantCanonicalModel, Promo)
+        .join(
+            MerchantCanonicalModel,
+            PromoMerchantCanonicalMap.merchant_canonical_id == MerchantCanonicalModel.id,
+        )
+        .join(Promo, PromoMerchantCanonicalMap.promo_id == Promo.id)
+        .where(PromoMerchantCanonicalMap.reviewed_at.is_(None))
+    )
+    if method is not None:
+        stmt = stmt.where(PromoMerchantCanonicalMap.method == method)
+    stmt = stmt.order_by(
+        PromoMerchantCanonicalMap.confidence.asc(),
+        PromoMerchantCanonicalMap.mapped_at.desc(),
+    )
+
+    count_stmt = (
+        select(func.count())
+        .select_from(PromoMerchantCanonicalMap)
+        .where(PromoMerchantCanonicalMap.reviewed_at.is_(None))
+    )
+    if method is not None:
+        count_stmt = count_stmt.where(PromoMerchantCanonicalMap.method == method)
+    total = int((await session.execute(count_stmt)).scalar_one())
+
+    rows = list((await session.execute(stmt.limit(limit).offset(offset))).all())
+
+    data: list[dict[str, Any]] = []
+    for mapping, merchant, promo in rows:
+        data.append(
+            {
+                "promo_id": str(mapping.promo_id),
+                "merchant_canonical": {
+                    "id": str(merchant.id),
+                    "slug": merchant.slug,
+                    "display_name_th": merchant.display_name_th,
+                    "display_name_en": merchant.display_name_en,
+                    "merchant_type": merchant.merchant_type,
+                    "status": merchant.status,
+                },
+                "raw_merchant_name": promo.merchant_name,
+                "promo_title_th": promo.title_th,
+                "confidence": float(mapping.confidence),
+                "method": mapping.method,
+                "mapped_at": mapping.mapped_at.isoformat() if mapping.mapped_at else None,
+            }
+        )
+
+    return {
+        "data": data,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "method": method,
+    }
+
+
+@router.post(
+    "/merchants/mapping-queue/{promo_id}/review",
+    summary="Mark a mapping reviewed (approve) or rewrite it (reject)",
+)
+async def review_merchant_mapping(
+    promo_id: uuid.UUID,
+    payload: dict[str, Any] = Body(...),
+    admin_id: uuid.UUID = Depends(get_current_admin_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Approve → stamp `reviewed_by` + `reviewed_at`.
+
+    Reject with `new_merchant_canonical_id` → rewrite the mapping to that
+    target AND stamp reviewed. Reject without a target → leave it in the
+    queue (clears nothing), for the admin UI to pick a target later.
+    """
+    approved = payload.get("approved")
+    if not isinstance(approved, bool):
+        raise LoftlyError(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="missing_approved",
+            message_en="`approved` (bool) is required.",
+            message_th="ต้องระบุ approved (true/false)",
+        )
+    reason = payload.get("reason")
+    new_target_raw = payload.get("new_merchant_canonical_id")
+
+    mapping = (
+        await session.execute(
+            select(PromoMerchantCanonicalMap).where(PromoMerchantCanonicalMap.promo_id == promo_id)
+        )
+    ).scalar_one_or_none()
+    if mapping is None:
+        raise LoftlyError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="mapping_not_found",
+            message_en=f"No promo→merchant mapping for promo {promo_id}.",
+            message_th="ไม่พบการแมปที่ระบุ",
+        )
+
+    rewrote_to: uuid.UUID | None = None
+    if not approved and new_target_raw:
+        try:
+            new_target_id = uuid.UUID(str(new_target_raw))
+        except ValueError as exc:
+            raise LoftlyError(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code="invalid_new_merchant_canonical_id",
+                message_en="new_merchant_canonical_id must be a UUID.",
+                message_th="รหัสปลายทางต้องเป็น UUID",
+            ) from exc
+        target = (
+            await session.execute(
+                select(MerchantCanonicalModel).where(MerchantCanonicalModel.id == new_target_id)
+            )
+        ).scalar_one_or_none()
+        if target is None or target.status != "active":
+            raise LoftlyError(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="target_not_found",
+                message_en="new_merchant_canonical_id must reference an active merchant.",
+                message_th="ต้องระบุร้านค้าที่ใช้งานได้",
+            )
+        mapping.merchant_canonical_id = new_target_id
+        mapping.method = "manual"
+        rewrote_to = new_target_id
+
+    # Approved, OR rejected-with-retarget -> stamp reviewed. Rejected without
+    # a retarget -> leave for a future action (no stamp).
+    stamped = False
+    if approved or rewrote_to is not None:
+        mapping.reviewed_by = admin_id
+        mapping.reviewed_at = datetime.now(UTC)
+        stamped = True
+
+    await log_action(
+        session,
+        actor_id=admin_id,
+        action="merchant.mapping_reviewed",
+        subject_type="promo_merchant_map",
+        subject_id=mapping.promo_id,
+        metadata={
+            "approved": approved,
+            "rewrote_to": str(rewrote_to) if rewrote_to else None,
+            "reason": reason,
+        },
+    )
+    await session.commit()
+
+    return {
+        "ok": True,
+        "stamped": stamped,
+        "rewrote_to": str(rewrote_to) if rewrote_to else None,
+    }

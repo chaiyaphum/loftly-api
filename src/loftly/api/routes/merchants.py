@@ -10,13 +10,9 @@ Ships the read side of `mvp/POST_V1.md §9` (ratified 2026-04-22 Q18):
   includes user_scope; TTL 300s anon / 60s authed.
 - `GET /v1/merchants` — browse hub with `category`, `letter` filters.
   SSG cached 15min.
-- `POST /v1/admin/merchants/{id}/merge` — **501 Not Implemented** for v1.
-- `POST /v1/admin/merchants/{id}/split` — **501 Not Implemented** for v1.
-- `GET /v1/admin/merchants/mapping-queue` — **501 Not Implemented** for v1.
-
-Admin routes are stubbed per the workstream spec; the schemas in
-`schemas/merchants.py` (AdminMergeRequest / AdminSplitRequest) are ready
-for the follow-up PR. See §9.1 in POST_V1.md for the queue design.
+- `POST /v1/admin/merchants/{id}/merge` — implemented in `routes/admin.py`.
+- `POST /v1/admin/merchants/{id}/split` — implemented in `routes/admin.py`.
+- `GET /v1/admin/merchants/mapping-queue` — implemented in `routes/admin.py`.
 
 Gated behind the `merchants_reverse_lookup_enabled` settings flag — when
 False the routes return 501 so staging can dark-launch without leaking a
@@ -339,56 +335,6 @@ async def get_merchant_page(
     )
     await cache.set(cache_key, payload.model_dump(mode="json"), _PAGE_ANON_TTL_SEC)
     return payload
-
-
-# ---------------------------------------------------------------------------
-# Admin stubs — 501 until §9.1 follow-up PR. Schemas live in
-# `schemas/merchants.py` so the admin UI can consume them early.
-# ---------------------------------------------------------------------------
-
-
-@router.post(
-    "/admin/{merchant_id}/merge",
-    summary="[stub] Merge a source canonical into this one",
-)
-async def admin_merge(merchant_id: str) -> dict[str, str]:
-    """TODO(§9.1): implement admin merge with CDN bust + GSC reindex ping."""
-    _ = merchant_id
-    raise LoftlyError(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        code="not_implemented",
-        message_en="Admin merchant merge is not implemented yet — see POST_V1.md §9.1.",
-        message_th="ฟังก์ชันผู้ดูแล (merge) ยังไม่พร้อมใช้งาน",
-    )
-
-
-@router.post(
-    "/admin/{merchant_id}/split",
-    summary="[stub] Split a canonical into two",
-)
-async def admin_split(merchant_id: str) -> dict[str, str]:
-    """TODO(§9.1): implement admin split with per-promo reassignment."""
-    _ = merchant_id
-    raise LoftlyError(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        code="not_implemented",
-        message_en="Admin merchant split is not implemented yet — see POST_V1.md §9.1.",
-        message_th="ฟังก์ชันผู้ดูแล (split) ยังไม่พร้อมใช้งาน",
-    )
-
-
-@router.get(
-    "/admin/mapping-queue",
-    summary="[stub] Review queue for low-confidence canonicalization",
-)
-async def admin_mapping_queue() -> dict[str, Any]:
-    """TODO(§9.1): expose `confidence < 0.8 OR action='uncertain'` rows."""
-    raise LoftlyError(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        code="not_implemented",
-        message_en="Mapping review queue is not implemented yet — see POST_V1.md §9.1.",
-        message_th="คิวตรวจสอบยังไม่พร้อมใช้งาน",
-    )
 
 
 __all__ = ["router"]
