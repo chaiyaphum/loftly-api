@@ -118,8 +118,8 @@ def _to_schema(m: MerchantCanonicalModel) -> MerchantCanonical:
         logo_url=m.logo_url,
         description_th=m.description_th,
         description_en=m.description_en,
-        merchant_type=m.merchant_type,  # type: ignore[arg-type]
-        status=m.status,  # type: ignore[arg-type]
+        merchant_type=m.merchant_type,
+        status=m.status,
     )
 
 
@@ -258,7 +258,7 @@ async def list_merchants(
                 display_name_th=m.display_name_th,
                 display_name_en=m.display_name_en,
                 category_default=m.category_default,
-                merchant_type=m.merchant_type,  # type: ignore[arg-type]
+                merchant_type=m.merchant_type,
                 active_promo_count=count,
             )
         )

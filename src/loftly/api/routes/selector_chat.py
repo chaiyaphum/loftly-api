@@ -490,7 +490,7 @@ async def chat(
     rationale_th = str((row.output or {}).get("rationale_th", ""))
     stack_json = _json.dumps(stored_stack, ensure_ascii=False)
     prompt = chat_prompt.load(
-        {
+        {  # type: ignore[arg-type]
             "locale": original_input.locale,
             "rationale_th": rationale_th,
             "stack_json": stack_json,
@@ -501,7 +501,7 @@ async def chat(
 
     # Cost cap — pre-flight estimate. Over the cap → skip the Haiku call and
     # surface the static fallback. No billable work.
-    estimated_thb = _estimate_chat_cost_thb(prompt["system"], prompt["user"])
+    estimated_thb = _estimate_chat_cost_thb(prompt["system"], prompt["user"])  # type: ignore[index]
     answer_th = _HAIKU_FALLBACK_TH
     answer_en: str | None = _HAIKU_FALLBACK_EN
     if estimated_thb > _CHAT_COST_CAP_THB:
@@ -514,7 +514,7 @@ async def chat(
         # 9) Haiku call under a 5s timeout. Any failure → static fallback.
         try:
             reply = await asyncio.wait_for(
-                _call_haiku_chat(prompt["system"], prompt["user"]),
+                _call_haiku_chat(prompt["system"], prompt["user"]),  # type: ignore[index]
                 timeout=_HAIKU_TIMEOUT_SEC,
             )
             answer_th = reply.get("answer_th") or _HAIKU_FALLBACK_TH
