@@ -37,6 +37,7 @@ from loftly.api.routes import (
     health,
     internal,
     me,
+    merchants,
     metrics,
     promos,
     selector,
@@ -246,6 +247,7 @@ def create_app() -> FastAPI:
     app.include_router(selector_chat.router)
     app.include_router(valuations.router)
     app.include_router(promos.router)
+    app.include_router(merchants.router)
     app.include_router(affiliate.router)
     app.include_router(admin.router)
     app.include_router(admin_flags.router)

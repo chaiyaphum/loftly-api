@@ -79,6 +79,32 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "expected_variants": None,
         "expected_rollout_pct": 0,
     },
+    {
+        "key": "selector_promo_context",
+        "description": (
+            "Promo-Aware Card Selector: inject deal-harvester active promos into "
+            "Sonnet cached context + render promo chips per stack card. "
+            "POST_V1 Tier A fast-follow ratified 2026-04-22. "
+            "Env override: LOFTLY_FF_SELECTOR_PROMO_CONTEXT. "
+            "Owner: founder. Default OFF; rollout = shadow-mode -> founder-only -> all staging."
+        ),
+        "type": "boolean",
+        "expected_variants": None,
+        "expected_rollout_pct": 0,
+    },
+    {
+        "key": "merchants_reverse_lookup",
+        "description": (
+            "POST_V1 §9 Merchant Reverse Lookup (/merchants/[slug]) — ranked cards "
+            "with active promos per merchant. Tier B ratified early via Q18 2026-04-22 "
+            "(lower PDPA surface than §6–§8). Seed 50 curated brands; hidden routes "
+            "behind flag until canonicalization precision ≥ 0.9. "
+            "Owner: founder. Default OFF."
+        ),
+        "type": "boolean",
+        "expected_variants": None,
+        "expected_rollout_pct": 0,
+    },
 ]
 
 

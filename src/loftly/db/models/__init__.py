@@ -73,6 +73,10 @@ from loftly.db.models.card import Card  # noqa: E402
 from loftly.db.models.consent import UserConsent  # noqa: E402
 from loftly.db.models.job import Job  # noqa: E402
 from loftly.db.models.loyalty_currency import LoyaltyCurrency  # noqa: E402
+from loftly.db.models.merchant import (  # noqa: E402
+    MerchantCanonical,
+    PromoMerchantCanonicalMap,
+)
 from loftly.db.models.point_valuation import PointValuation  # noqa: E402
 from loftly.db.models.promo import Promo, promo_card_map  # noqa: E402
 from loftly.db.models.selector_session import SelectorSession  # noqa: E402
@@ -94,8 +98,10 @@ __all__ = [
     "Card",
     "Job",
     "LoyaltyCurrency",
+    "MerchantCanonical",
     "PointValuation",
     "Promo",
+    "PromoMerchantCanonicalMap",
     "SelectorSession",
     "SyncRun",
     "TransferRatio",
