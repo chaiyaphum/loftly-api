@@ -27,6 +27,7 @@ from loftly.api.errors import LoftlyError
 from loftly.core.settings import Settings, get_settings
 from loftly.db.engine import get_session
 from loftly.db.models.audit import SyncRun
+from loftly.jobs.canonicalize_merchants import run_canonicalization
 from loftly.jobs.deal_harvester_sync import run_sync
 
 router = APIRouter(prefix="/v1/internal", tags=["internal"])
@@ -100,6 +101,24 @@ async def last_sync(
         "mapping_queue_added": row.mapping_queue_added,
         "error_message": row.error_message,
     }
+
+
+@router.post(
+    "/canonicalize-merchants",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Trigger merchant canonicalization batch",
+)
+async def trigger_canonicalize_merchants(
+    background_tasks: BackgroundTasks,
+    _auth: None = Depends(require_internal_api_key),
+) -> dict[str, str]:
+    """Queue the canonicalization job. Poll `/sync/deal-harvester/last`-style
+    status via `GET /v1/internal/sync/merchant-canonicalizer/last` (not yet
+    wired — check `sync_runs` table directly for now) or via the admin
+    metrics dashboard. Same shape as `/sync/deal-harvester` for consistency.
+    """
+    background_tasks.add_task(run_canonicalization)
+    return {"job_id": "merchant-canonicalizer", "status": "queued"}
 
 
 @router.post(
