@@ -204,10 +204,16 @@ def create_app() -> FastAPI:
     )
 
     # CORS — see API_CONTRACT.md §Security baseline.
+    # The DO App Platform staging URL (`loftly-web-staging-xymb5.ondigitalocean.app`)
+    # is listed explicitly because the web app is served from that origin until
+    # the `staging.loftly.co.th` CNAME is wired. Without it the browser fails
+    # preflight with 400 "Disallowed CORS origin" and /v1/selector POSTs
+    # surface to users as "เครือข่ายขัดข้อง".
     allowed_origins = [
         "https://loftly.co.th",
         "https://www.loftly.co.th",
         "https://staging.loftly.co.th",
+        "https://loftly-web-staging-xymb5.ondigitalocean.app",
         "http://localhost:3000",
     ]
     app.add_middleware(
