@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -20,6 +22,7 @@ from loftly.db.models.author import Author
 from loftly.db.models.bank import Bank
 from loftly.db.models.card import Card
 from loftly.db.models.loyalty_currency import LoyaltyCurrency
+from loftly.db.models.promo import Promo
 
 # Stable UUID for the default organization byline. Pinned in migration 017
 # and re-inserted here so the test harness (which uses `create_all` instead
@@ -340,6 +343,316 @@ BATCH_1_CARDS: list[dict[str, Any]] = [
 ]
 
 
+# Batch-1 active promos — 8 SCB + 6 KTC cross-merchant promotions so the
+# staging `/promos-today` feed shows as multi-bank rather than KBank-only.
+# Date anchors assume catalog is freshly seeded around late April 2026;
+# `valid_until` spread across short/medium/long urgencies so the feed has
+# a realistic countdown mix. Copy mirrors the tone used on each issuer's
+# promotions site — no "demo" markers, no example.com URLs.
+#
+# Kept outside `seed_all` / `seeded_db` fixture for the same reason as
+# `BATCH_1_CARDS`: some test assertions count seeded rows, and the
+# merchant-canonicalization pipeline owns any joins to MerchantCanonical.
+BATCH_1_PROMOS: list[dict[str, Any]] = [
+    # ---- SCB (8) --------------------------------------------------------
+    {
+        "external_source_id": "scb-starbucks-monday-cashback-2026-05",
+        "external_bank_key": "scb",
+        "bank_slug": "scb",
+        "source_url": "https://www.scb.co.th/th/personal-banking/promotions/lifestyle/starbucks-monday-cashback.html",
+        "promo_type": "cashback",
+        "title_th": "รับเงินคืน 10% ที่ Starbucks ทุกวันจันทร์ กับบัตรเครดิต SCB FIRST",
+        "title_en": "10% cashback at Starbucks every Monday with SCB FIRST",
+        "description_th": "ใช้จ่ายที่ Starbucks ทุกสาขาในวันจันทร์ รับเครดิตเงินคืน 10% สูงสุด 300 บาท/เดือน ผ่านแอป SCB EASY",
+        "merchant_name": "Starbucks",
+        "category": "dining-cafe",
+        "discount_type": "cashback",
+        "discount_value": "10%",
+        "discount_amount": Decimal("10.00"),
+        "discount_unit": "percent",
+        "minimum_spend": Decimal("200"),
+        "valid_from": date(2026, 3, 1),
+        "valid_until": date(2026, 6, 30),
+        "raw_data": {},
+        "relevance_tags": ["category:dining", "category:cafe", "bank:scb", "merchant:starbucks"],
+    },
+    {
+        "external_source_id": "scb-agoda-hotel-15pct-2026-summer",
+        "external_bank_key": "scb",
+        "bank_slug": "scb",
+        "source_url": "https://www.scb.co.th/th/personal-banking/promotions/travel/agoda-summer-getaway.html",
+        "promo_type": "discount",
+        "title_th": "ส่วนลด 15% จองโรงแรมทั่วโลกที่ Agoda กับบัตรเครดิต SCB",
+        "title_en": "15% off worldwide hotels on Agoda with SCB credit cards",
+        "description_th": "จองที่พักผ่าน Agoda ด้วยบัตรเครดิต SCB รับส่วนลดสูงสุด 15% เมื่อจองขั้นต่ำ 3,000 บาท เหมาะกับทริปกลางปี",
+        "merchant_name": "Agoda",
+        "category": "travel",
+        "discount_type": "percentage",
+        "discount_value": "15%",
+        "discount_amount": Decimal("15.00"),
+        "discount_unit": "percent",
+        "minimum_spend": Decimal("3000"),
+        "valid_from": date(2026, 4, 1),
+        "valid_until": date(2026, 6, 15),
+        "raw_data": {},
+        "relevance_tags": ["category:travel", "bank:scb", "merchant:agoda"],
+    },
+    {
+        "external_source_id": "scb-lazada-payday-500off-2026-04",
+        "external_bank_key": "scb",
+        "bank_slug": "scb",
+        "source_url": "https://www.scb.co.th/th/personal-banking/promotions/online-shopping/lazada-payday.html",
+        "promo_type": "discount",
+        "title_th": "ลดทันที ฿500 ที่ Lazada Payday กับบัตรเครดิต SCB",
+        "title_en": "฿500 off on Lazada Payday with SCB credit cards",
+        "description_th": "กรอกโค้ดพิเศษที่ Lazada ช่วง Payday รับส่วนลด 500 บาท เมื่อช้อปครบ 3,500 บาท เฉพาะบัตรเครดิต SCB",
+        "merchant_name": "Lazada",
+        "category": "ecommerce",
+        "discount_type": "baht_off",
+        "discount_value": "฿500",
+        "discount_amount": Decimal("500.00"),
+        "discount_unit": "thb",
+        "minimum_spend": Decimal("3500"),
+        "valid_from": date(2026, 4, 20),
+        "valid_until": date(2026, 4, 28),
+        "raw_data": {},
+        "relevance_tags": ["category:ecommerce", "category:online", "bank:scb", "merchant:lazada"],
+    },
+    {
+        "external_source_id": "scb-shopee-3x-points-2026-05",
+        "external_bank_key": "scb",
+        "bank_slug": "scb",
+        "source_url": "https://www.scb.co.th/th/personal-banking/promotions/online-shopping/shopee-rewards-x3.html",
+        "promo_type": "points_bonus",
+        "title_th": "รับคะแนน SCB Rewards x3 เมื่อช้อปที่ Shopee",
+        "title_en": "Earn 3x SCB Rewards points on Shopee purchases",
+        "description_th": "ช้อปที่ Shopee ด้วยบัตรเครดิต SCB รับคะแนนสะสม 3 เท่า สูงสุด 1,500 คะแนน/เดือน ตลอดเดือนพฤษภาคม",
+        "merchant_name": "Shopee",
+        "category": "ecommerce",
+        "discount_type": "points_multiplier",
+        "discount_value": "3x points",
+        "discount_amount": Decimal("3.00"),
+        "discount_unit": "x_multiplier",
+        "minimum_spend": Decimal("500"),
+        "valid_from": date(2026, 4, 15),
+        "valid_until": date(2026, 5, 31),
+        "raw_data": {},
+        "relevance_tags": ["category:ecommerce", "category:online", "bank:scb", "merchant:shopee"],
+    },
+    {
+        "external_source_id": "scb-themall-weekend-cashback-2026-05",
+        "external_bank_key": "scb",
+        "bank_slug": "scb",
+        "source_url": "https://www.scb.co.th/th/personal-banking/promotions/shopping/themall-weekend-cashback.html",
+        "promo_type": "cashback",
+        "title_th": "รับเงินคืน 8% ที่ The Mall ทุกวันเสาร์-อาทิตย์",
+        "title_en": "8% cashback at The Mall every weekend",
+        "description_th": "ช้อปในศูนย์การค้า The Mall ทุกสาขาวันเสาร์-อาทิตย์ รับเครดิตเงินคืน 8% สูงสุด 800 บาท/เดือน เมื่อใช้จ่ายขั้นต่ำ 2,000 บาทต่อเซลส์สลิป",
+        "merchant_name": "The Mall",
+        "category": "retail",
+        "discount_type": "cashback",
+        "discount_value": "8%",
+        "discount_amount": Decimal("8.00"),
+        "discount_unit": "percent",
+        "minimum_spend": Decimal("2000"),
+        "valid_from": date(2026, 4, 1),
+        "valid_until": date(2026, 5, 10),
+        "raw_data": {},
+        "relevance_tags": ["category:retail", "bank:scb", "merchant:themall"],
+    },
+    {
+        "external_source_id": "scb-central-dept-12pct-off-2026-05",
+        "external_bank_key": "scb",
+        "bank_slug": "scb",
+        "source_url": "https://www.scb.co.th/th/personal-banking/promotions/shopping/central-department-store.html",
+        "promo_type": "discount",
+        "title_th": "ส่วนลด 12% ที่ห้างเซ็นทรัล เมื่อช้อปขั้นต่ำ 5,000 บาท",
+        "title_en": "12% off at Central Department Store (min. ฿5,000)",
+        "description_th": "รับส่วนลดทันที 12% ที่ Central Department Store ทุกสาขา ใช้ได้กับบัตรเครดิต SCB PRIME และ SCB FIRST",
+        "merchant_name": "Central",
+        "category": "retail",
+        "discount_type": "percentage",
+        "discount_value": "12%",
+        "discount_amount": Decimal("12.00"),
+        "discount_unit": "percent",
+        "minimum_spend": Decimal("5000"),
+        "valid_from": date(2026, 4, 5),
+        "valid_until": date(2026, 5, 18),
+        "raw_data": {},
+        "relevance_tags": ["category:retail", "bank:scb", "merchant:central"],
+    },
+    {
+        "external_source_id": "scb-siam-paragon-dining-2026-04",
+        "external_bank_key": "scb",
+        "bank_slug": "scb",
+        "source_url": "https://www.scb.co.th/th/personal-banking/promotions/dining/siam-paragon-restaurants.html",
+        "promo_type": "cashback",
+        "title_th": "รับเงินคืน 15% ร้านอาหารในสยามพารากอน",
+        "title_en": "15% cashback at Siam Paragon restaurants",
+        "description_th": "ทานอาหารร้านพันธมิตรในสยามพารากอน 40+ ร้าน รับเครดิตเงินคืน 15% สูงสุด 500 บาทต่อใบเสร็จ เฉพาะวันศุกร์-อาทิตย์",
+        "merchant_name": "Siam Paragon",
+        "category": "dining-restaurants",
+        "discount_type": "cashback",
+        "discount_value": "15%",
+        "discount_amount": Decimal("15.00"),
+        "discount_unit": "percent",
+        "minimum_spend": Decimal("1500"),
+        "valid_from": date(2026, 4, 1),
+        "valid_until": date(2026, 4, 26),
+        "raw_data": {},
+        "relevance_tags": ["category:dining", "bank:scb", "merchant:siam-paragon"],
+    },
+    {
+        "external_source_id": "scb-emporium-luxury-2x-points-2026-06",
+        "external_bank_key": "scb",
+        "bank_slug": "scb",
+        "source_url": "https://www.scb.co.th/th/personal-banking/promotions/lifestyle/emporium-luxury-rewards.html",
+        "promo_type": "points_bonus",
+        "title_th": "รับคะแนน SCB Rewards x2 ที่ Emporium และ EmQuartier",
+        "title_en": "2x SCB Rewards points at Emporium & EmQuartier",
+        "description_th": "ใช้จ่ายที่ร้านแบรนด์เนมในเอ็มโพเรียมและเอ็มควอเทียร์ รับคะแนนสะสมเพิ่ม 2 เท่า เมื่อใช้จ่ายตั้งแต่ 3,000 บาทขึ้นไป",
+        "merchant_name": "Emporium",
+        "category": "retail",
+        "discount_type": "points_multiplier",
+        "discount_value": "2x points",
+        "discount_amount": Decimal("2.00"),
+        "discount_unit": "x_multiplier",
+        "minimum_spend": Decimal("3000"),
+        "valid_from": date(2026, 4, 10),
+        "valid_until": date(2026, 6, 20),
+        "raw_data": {},
+        "relevance_tags": ["category:retail", "bank:scb", "merchant:emporium"],
+    },
+    # ---- KTC (6) --------------------------------------------------------
+    {
+        "external_source_id": "ktc-7eleven-everyday-5pct-2026-q2",
+        "external_bank_key": "ktc",
+        "bank_slug": "ktc",
+        "source_url": "https://www.ktc.co.th/promotion/shopping/7-eleven-everyday-cashback",
+        "promo_type": "cashback",
+        "title_th": "รับเงินคืน 5% ที่ 7-Eleven ทุกวัน สูงสุด 200 บาท/เดือน",
+        "title_en": "5% daily cashback at 7-Eleven (up to ฿200/month)",
+        "description_th": "ใช้จ่ายที่ 7-Eleven ทุกสาขาทั่วประเทศ รับเครดิตเงินคืน 5% ตลอดไตรมาส 2 เฉพาะบัตรเครดิต KTC",
+        "merchant_name": "7-Eleven",
+        "category": "grocery",
+        "discount_type": "cashback",
+        "discount_value": "5%",
+        "discount_amount": Decimal("5.00"),
+        "discount_unit": "percent",
+        "minimum_spend": Decimal("100"),
+        "valid_from": date(2026, 4, 1),
+        "valid_until": date(2026, 6, 30),
+        "raw_data": {},
+        "relevance_tags": ["category:grocery", "bank:ktc", "merchant:7-eleven"],
+    },
+    {
+        "external_source_id": "ktc-bigc-weekend-300off-2026-05",
+        "external_bank_key": "ktc",
+        "bank_slug": "ktc",
+        "source_url": "https://www.ktc.co.th/promotion/supermarket/bigc-weekend-300off",
+        "promo_type": "discount",
+        "title_th": "ลด ฿300 ที่ Big C ทุกสุดสัปดาห์ เมื่อช้อปครบ 3,000 บาท",
+        "title_en": "฿300 off at Big C weekends (min. ฿3,000)",
+        "description_th": "ช้อปที่ Big C Supercenter และ Big C Extra ทุกวันเสาร์-อาทิตย์ รับส่วนลดทันที 300 บาท เมื่อชำระด้วยบัตรเครดิต KTC",
+        "merchant_name": "Big C",
+        "category": "grocery",
+        "discount_type": "baht_off",
+        "discount_value": "฿300",
+        "discount_amount": Decimal("300.00"),
+        "discount_unit": "thb",
+        "minimum_spend": Decimal("3000"),
+        "valid_from": date(2026, 4, 1),
+        "valid_until": date(2026, 5, 10),
+        "raw_data": {},
+        "relevance_tags": ["category:grocery", "bank:ktc", "merchant:bigc"],
+    },
+    {
+        "external_source_id": "ktc-makro-bulk-2pct-2026-06",
+        "external_bank_key": "ktc",
+        "bank_slug": "ktc",
+        "source_url": "https://www.ktc.co.th/promotion/wholesale/makro-cashback",
+        "promo_type": "cashback",
+        "title_th": "รับเงินคืน 2% ที่ Makro ทุกสาขา",
+        "title_en": "2% cashback at Makro stores",
+        "description_th": "ใช้บัตรเครดิต KTC ที่ Makro ทุกสาขา รับเครดิตเงินคืน 2% สำหรับการช้อปตั้งแต่ 5,000 บาทต่อใบเสร็จ สูงสุด 500 บาท/เดือน",
+        "merchant_name": "Makro",
+        "category": "grocery",
+        "discount_type": "cashback",
+        "discount_value": "2%",
+        "discount_amount": Decimal("2.00"),
+        "discount_unit": "percent",
+        "minimum_spend": Decimal("5000"),
+        "valid_from": date(2026, 3, 15),
+        "valid_until": date(2026, 6, 14),
+        "raw_data": {},
+        "relevance_tags": ["category:grocery", "bank:ktc", "merchant:makro"],
+    },
+    {
+        "external_source_id": "ktc-foodpanda-delivery-100off-2026-04",
+        "external_bank_key": "ktc",
+        "bank_slug": "ktc",
+        "source_url": "https://www.ktc.co.th/promotion/food-delivery/foodpanda-code-ktc100",
+        "promo_type": "discount",
+        "title_th": "ลด ฿100 ค่าอาหารที่ foodpanda โค้ด KTC100",
+        "title_en": "฿100 off foodpanda orders with code KTC100",
+        "description_th": "กรอกโค้ด KTC100 บนแอป foodpanda รับส่วนลดทันที 100 บาท เมื่อสั่งอาหารขั้นต่ำ 400 บาท ชำระด้วยบัตรเครดิต KTC",
+        "merchant_name": "foodpanda",
+        "category": "dining",
+        "discount_type": "baht_off",
+        "discount_value": "฿100",
+        "discount_amount": Decimal("100.00"),
+        "discount_unit": "thb",
+        "minimum_spend": Decimal("400"),
+        "valid_from": date(2026, 4, 18),
+        "valid_until": date(2026, 4, 29),
+        "raw_data": {},
+        "relevance_tags": ["category:dining", "bank:ktc", "merchant:foodpanda"],
+    },
+    {
+        "external_source_id": "ktc-grab-ride-15pct-2026-05",
+        "external_bank_key": "ktc",
+        "bank_slug": "ktc",
+        "source_url": "https://www.ktc.co.th/promotion/transport/grab-ride-discount",
+        "promo_type": "discount",
+        "title_th": "ส่วนลด 15% ค่าบริการ Grab สูงสุด 60 บาทต่อครั้ง",
+        "title_en": "15% off Grab rides (up to ฿60 per trip)",
+        "description_th": "เรียก GrabCar หรือ GrabBike ชำระผ่านบัตรเครดิต KTC รับส่วนลด 15% ใช้ได้ 4 ครั้งต่อเดือน ตลอดเดือนพฤษภาคม 2026",
+        "merchant_name": "Grab",
+        "category": "online",
+        "discount_type": "percentage",
+        "discount_value": "15%",
+        "discount_amount": Decimal("15.00"),
+        "discount_unit": "percent",
+        "minimum_spend": Decimal("150"),
+        "valid_from": date(2026, 4, 25),
+        "valid_until": date(2026, 5, 31),
+        "raw_data": {},
+        "relevance_tags": ["category:online", "bank:ktc", "merchant:grab"],
+    },
+    {
+        "external_source_id": "ktc-mcdonalds-combo-2x-points-2026-05",
+        "external_bank_key": "ktc",
+        "bank_slug": "ktc",
+        "source_url": "https://www.ktc.co.th/promotion/dining/mcdonalds-forever-points",
+        "promo_type": "points_bonus",
+        "title_th": "รับคะแนน KTC Forever Points x2 ที่ McDonald's",
+        "title_en": "2x KTC Forever Points at McDonald's",
+        "description_th": "ใช้จ่ายที่ McDonald's ทุกสาขารวมถึงแอป McDelivery รับคะแนนสะสม KTC Forever Points x2 ไม่จำกัดยอดสูงสุด",
+        "merchant_name": "McDonald's",
+        "category": "dining-restaurants",
+        "discount_type": "points_multiplier",
+        "discount_value": "2x points",
+        "discount_amount": Decimal("2.00"),
+        "discount_unit": "x_multiplier",
+        "minimum_spend": Decimal("150"),
+        "valid_from": date(2026, 4, 15),
+        "valid_until": date(2026, 5, 14),
+        "raw_data": {},
+        "relevance_tags": ["category:dining", "bank:ktc", "merchant:mcdonalds"],
+    },
+]
+
+
 # ---------------------------------------------------------------------------
 # Seed logic — idempotent via unique-column lookup.
 # ---------------------------------------------------------------------------
@@ -487,4 +800,85 @@ async def seed_batch1_cards(session: AsyncSession) -> int:
     inserted = await _seed_cards_from(session, BATCH_1_CARDS)
     await session.commit()
     log.info("batch1_cards_seed_complete", cards_inserted=inserted)
+    return inserted
+
+
+async def _seed_promos_from(session: AsyncSession, promos: list[dict[str, Any]]) -> int:
+    """Insert any `promos` rows missing from the DB (matched on external_source_id).
+
+    Mirrors `_seed_cards_from` semantics — looks up bank_id from bank_slug, skips
+    rows whose external_source_id is already present, and fills every Promo column
+    the dict supplies. `last_synced_at` defaults to "now" when not provided so
+    the row looks fresh to the freshness-header logic.
+    """
+    # Banks may have been added in the same session; flush so lookups see them.
+    await session.flush()
+
+    existing_ids = set(
+        (
+            await session.scalars(
+                select(Promo.external_source_id).where(Promo.external_source_id.is_not(None))
+            )
+        ).all(),
+    )
+    bank_by_slug = {b.slug: b for b in (await session.scalars(select(Bank))).all()}
+
+    inserted = 0
+    now = datetime.now(UTC)
+    for row in promos:
+        if row["external_source_id"] in existing_ids:
+            continue
+        bank = bank_by_slug.get(row["bank_slug"])
+        if bank is None:
+            log.warning(
+                "batch1_promo_skip_missing_bank",
+                external_source_id=row["external_source_id"],
+                bank_slug=row["bank_slug"],
+            )
+            continue
+        session.add(
+            Promo(
+                bank_id=bank.id,
+                external_source_id=row["external_source_id"],
+                external_bank_key=row.get("external_bank_key"),
+                source_url=row["source_url"],
+                promo_type=row.get("promo_type"),
+                title_th=row["title_th"],
+                title_en=row.get("title_en"),
+                description_th=row.get("description_th"),
+                description_en=row.get("description_en"),
+                merchant_name=row.get("merchant_name"),
+                category=row.get("category"),
+                discount_type=row.get("discount_type"),
+                discount_value=row.get("discount_value"),
+                discount_amount=row.get("discount_amount"),
+                discount_unit=row.get("discount_unit"),
+                minimum_spend=row.get("minimum_spend"),
+                valid_from=row.get("valid_from"),
+                valid_until=row.get("valid_until"),
+                raw_data=row.get("raw_data", {}),
+                relevance_tags=row.get("relevance_tags", []),
+                active=row.get("active", True),
+                last_synced_at=row.get("last_synced_at", now),
+            )
+        )
+        inserted += 1
+    return inserted
+
+
+async def seed_batch1_promos(session: AsyncSession) -> int:
+    """Insert the Batch-1 active promos (8 SCB + 6 KTC) for staging coverage.
+
+    Idempotent: rows with matching external_source_id are skipped. Commits on
+    success so it can be called standalone from `scripts/seed_catalog.py`.
+    Kept out of `seed_all` / the `seeded_db` test fixture for the same reason
+    as `seed_batch1_cards` — promo-count assertions in the existing suite rely
+    on the fixture keeping a clean (empty) promos table.
+    """
+    # Defensive: promos FK on banks, so re-seed banks when invoked standalone.
+    await _seed_banks(session)
+
+    inserted = await _seed_promos_from(session, BATCH_1_PROMOS)
+    await session.commit()
+    log.info("batch1_promos_seed_complete", promos_inserted=inserted)
     return inserted
