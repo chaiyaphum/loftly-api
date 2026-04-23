@@ -157,3 +157,40 @@ async def test_selector_happy_path_writes_session_meta(
     assert meta.card_id == primary_id
     assert meta.profile_hash  # non-empty; exact value depends on payload hash
     assert meta.last_seen_at  # ISO-8601 string
+
+
+async def test_selector_uses_fallback_valuations_when_point_valuations_empty(
+    seeded_client: AsyncClient,
+) -> None:
+    """DEVLOG 2026-04-23 — Ports the PR #38 fallback pattern to /v1/selector.
+
+    The seed fixtures intentionally do NOT populate `point_valuations`
+    (staging mirrors this — the weekly compute job has not run). Before the
+    fix, the deterministic provider returned `monthly_earning_thb_equivalent=0`
+    for every card because `valuations_by_currency_code.get(...)` missed every
+    code. After the fix, `_load_context` fills the dict with
+    `FallbackValuation` rows from the shared starter table and the provider
+    emits a `fallback_valuation:<code>` warning so the UI can badge the number.
+    """
+    resp = await seeded_client.post("/v1/selector", json=_base_payload())
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["stack"], "seed + miles goal should produce a non-empty stack"
+    # The core regression — every stack item must have non-zero THB equivalent.
+    for item in body["stack"]:
+        assert item["monthly_earning_thb_equivalent"] > 0, (
+            f"card {item['slug']} regressed to 0 THB — fallback valuation did not apply"
+        )
+    # Aggregate mirrors the per-card math.
+    assert body["total_monthly_earning_thb_equivalent"] > 0
+
+    # Provenance: at least one `fallback_valuation:<code>` warning for the
+    # currency actually used in the stack. Matches merchant_ranking.py naming.
+    fallback_warnings = [
+        w for w in body["warnings"] if isinstance(w, str) and w.startswith("fallback_valuation:")
+    ]
+    assert fallback_warnings, (
+        "expected at least one `fallback_valuation:<code>` warning so the UI "
+        "can surface 'estimated, not from weekly compute' provenance"
+    )
