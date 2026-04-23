@@ -103,15 +103,18 @@ def _build_mock_haiku_result(card_id: str, slug: str) -> SelectorResult:
                     "card_id": card_id,
                     "slug": slug,
                     "role": "primary",
+                    # 1200 pts × 0.15 (K_POINT fallback valuation) = 180 THB.
+                    # Must stay within ±5% of that product so the route-level
+                    # `_validate_earning_consistency` quality gate accepts it.
                     "monthly_earning_points": 1200,
-                    "monthly_earning_thb_equivalent": 150,
+                    "monthly_earning_thb_equivalent": 180,
                     "annual_fee_thb": None,
                     "reason_th": "บัตรหลัก Haiku",
                     "reason_en": "Primary pick (Haiku)",
                 }
             ],
             "total_monthly_earning_points": 1200,
-            "total_monthly_earning_thb_equivalent": 150,
+            "total_monthly_earning_thb_equivalent": 180,
             "months_to_goal": None,
             "with_signup_bonus_months": None,
             "valuation_confidence": 0.7,
@@ -135,15 +138,18 @@ def _build_mock_sonnet_result(card_id: str, slug: str) -> SelectorResult:
                     "card_id": card_id,
                     "slug": slug,
                     "role": "primary",
+                    # 1500 pts × 0.15 (K_POINT fallback valuation) = 225 THB.
+                    # Kept exact so the route-level quality gate (±5% drift)
+                    # accepts the mocked result.
                     "monthly_earning_points": 1500,
-                    "monthly_earning_thb_equivalent": 200,
+                    "monthly_earning_thb_equivalent": 225,
                     "annual_fee_thb": None,
                     "reason_th": "บัตรหลัก Sonnet",
                     "reason_en": "Primary pick (Sonnet)",
                 }
             ],
             "total_monthly_earning_points": 1500,
-            "total_monthly_earning_thb_equivalent": 200,
+            "total_monthly_earning_thb_equivalent": 225,
             "months_to_goal": None,
             "with_signup_bonus_months": None,
             "valuation_confidence": 0.85,

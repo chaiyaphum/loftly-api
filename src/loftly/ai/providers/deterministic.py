@@ -39,6 +39,10 @@ from loftly.schemas.selector import (
     SelectorResult,
     SelectorStackItem,
 )
+from loftly.services.valuation_fallback import (
+    FallbackValuation,
+    resolve_earn_rate_key,
+)
 
 # Categories the client may send; keep in sync with openapi.yaml#SelectorInput.
 KNOWN_CATEGORIES = {"dining", "online", "travel", "grocery", "petrol", "other"}
@@ -47,8 +51,10 @@ KNOWN_CATEGORIES = {"dining", "online", "travel", "grocery", "petrol", "other"}
 def _blended_earn_rate(card: CardModel, categories: dict[str, int]) -> float:
     """Weighted earn rate for a card across the user's category mix.
 
-    Uses `earn_rate_local["default"]` as the baseline; per-category keys in
-    `earn_rate_local` override. Returns 0.0 if the card has no rates at all.
+    Looks up each user-supplied category in `earn_rate_local` with alias
+    fallback (e.g. selector "grocery" → card "supermarket", selector "petrol"
+    → card "fuel"). Unmapped categories fall through to `default`. Returns
+    0.0 if the card has no rates at all.
     """
     rates: dict[str, float] = {k: float(v) for k, v in (card.earn_rate_local or {}).items()}
     if not rates:
@@ -57,7 +63,8 @@ def _blended_earn_rate(card: CardModel, categories: dict[str, int]) -> float:
     total_spend = sum(categories.values()) or 1
     weighted_sum = 0.0
     for cat, amount in categories.items():
-        rate = rates.get(cat, default_rate)
+        key = resolve_earn_rate_key(cat, rates)
+        rate = rates[key] if key is not None else default_rate
         weighted_sum += rate * amount
     return weighted_sum / total_spend
 
@@ -87,6 +94,12 @@ class DeterministicProvider:
         # Score every candidate card, tagging reasons to explain the rank.
         scored: list[tuple[float, CardModel, int, float]] = []
         eligibility_warnings: list[str] = []
+        # Track currencies whose valuation came from the starter fallback table
+        # (vs. a real `point_valuations` row). Surfaced once per unique code in
+        # the top-level `warnings` array so the UI can render an "estimated,
+        # not from weekly compute" badge. Matches the `fallback_valuation`
+        # rule convention from `services/merchant_ranking.py` (PR #38).
+        fallback_codes_used: set[str] = set()
         for card in context.cards:
             if card.status != "active":
                 continue
@@ -105,6 +118,8 @@ class DeterministicProvider:
 
             valuation = context.valuations_by_currency_code.get(cur.code)
             thb_per_point = float(valuation.thb_per_point) if valuation else 0.0
+            if isinstance(valuation, FallbackValuation):
+                fallback_codes_used.add(cur.code)
             monthly_thb_equivalent = int(monthly_points * thb_per_point)
 
             # Soft score: combine THB-equivalent + benefit depth + currency preference.
@@ -161,6 +176,7 @@ class DeterministicProvider:
 
         # Confidence: average valuation confidence across stacked currencies,
         # defaulting to 0.5 for the rule-based path.
+        stacked_fallback_codes: set[str] = set()
         if stack:
             confidences: list[float] = []
             for item in stack:
@@ -169,9 +185,22 @@ class DeterministicProvider:
                 val = context.valuations_by_currency_code.get(card.earn_currency.code)
                 if val is not None:
                     confidences.append(float(val.confidence))
+                # Only surface fallback notes for codes on the final stack —
+                # filtering keeps `warnings` compact vs. flooding every seeded
+                # card's currency.
+                if card.earn_currency.code in fallback_codes_used and isinstance(
+                    val, FallbackValuation
+                ):
+                    stacked_fallback_codes.add(card.earn_currency.code)
             valuation_confidence = sum(confidences) / len(confidences) if confidences else 0.5
         else:
             valuation_confidence = 0.0
+
+        # Emit `fallback_valuation:<code>` once per currency actually used in
+        # the returned stack. Matches `services/merchant_ranking.py` naming so
+        # the UI can reuse the same rule parser.
+        for code in sorted(stacked_fallback_codes):
+            eligibility_warnings.append(f"fallback_valuation:{code}")
 
         return SelectorResult(
             session_id="deterministic",  # overwritten by route handler

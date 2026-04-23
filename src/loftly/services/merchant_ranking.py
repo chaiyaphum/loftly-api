@@ -52,6 +52,11 @@ from loftly.db.models.merchant import (
 from loftly.db.models.point_valuation import PointValuation
 from loftly.db.models.promo import Promo
 from loftly.schemas.merchants import MerchantRankedCard, PromoSummary
+from loftly.services.valuation_fallback import (
+    FallbackValuation,
+    apply_fallback_valuations,
+    resolve_earn_rate_key,
+)
 
 log = get_logger(__name__)
 
@@ -78,49 +83,15 @@ _UNIT_PERCENT = "percent"
 _UNIT_THB = "thb"
 
 
-class _FallbackValuation:
-    """Duck-typed stand-in for `PointValuation` when the DB row is missing.
-
-    Callers access `.thb_per_point` and `.confidence` — that's the contract
-    we need to satisfy. Not persisted, not committed, just a value object.
-    """
-
-    __slots__ = ("confidence", "thb_per_point")
-
-    def __init__(self, thb_per_point: float, confidence: float) -> None:
-        self.thb_per_point = Decimal(str(thb_per_point))
-        self.confidence = Decimal(str(confidence))
-
-
-# Per-currency fallback valuations. Mirrors the `_STARTER_FALLBACK_CODES`
-# pattern in `routes/valuations.py` but extended to cover every currency
-# declared in `db/seed.py CURRENCIES`. Values are directional THB/point
-# estimates compiled from publicly posted redemptions + `VALUATION_METHOD.md`
-# §seed numbers. Confidence clamped to 0.55 for the DB-empty path so the UI
-# still shows real-feeling headlines; once the valuation weekly job
-# populates `point_valuations`, the DB reads override these.
-_FALLBACK_VALUATIONS_BY_CODE: dict[str, tuple[float, float]] = {
-    # (thb_per_point, confidence)
-    "KF": (0.82, 0.6),  # KrisFlyer
-    "AM": (0.80, 0.6),  # Asia Miles
-    "ROP": (0.35, 0.7),  # Royal Orchid Plus
-    "BONVOY": (0.35, 0.6),  # Marriott Bonvoy
-    "K_POINT": (0.15, 0.55),  # KBank Rewards
-    "UOB_REWARDS": (0.12, 0.55),  # UOB Rewards
-    "KTC_FOREVER": (0.20, 0.55),  # KTC Forever Points
-    "SCB_REWARDS": (0.18, 0.55),  # SCB M Points
-    "MEMBERSHIP_REWARDS": (1.0, 0.6),  # Amex MR — higher because transferable to airlines
-}
-
-
 async def _fetch_valuations(
     session: AsyncSession,
 ) -> dict[str, object]:
     """Map currency code → most-recent valuation.
 
     DB-empty fallback: when `point_valuations` has no rows (staging with
-    the weekly compute job not yet run), we synthesize `_FallbackValuation`
-    objects from `_FALLBACK_VALUATIONS_BY_CODE`. This keeps the merchant
+    the weekly compute job not yet run), we synthesize `FallbackValuation`
+    objects from `FALLBACK_VALUATIONS_BY_CODE` (shared with the Selector
+    path — see `services/valuation_fallback.py`). This keeps the merchant
     ranking endpoint honest — every seeded card's currency has a non-zero
     `thb_per_point`, so `est_value_per_1000_thb` is non-zero end-to-end.
 
@@ -138,10 +109,8 @@ async def _fetch_valuations(
         valuation, code = row[0], row[1]
         if code not in out:
             out[code] = valuation
-    # Fill in missing codes with fallback values.
-    for code, (thb, conf) in _FALLBACK_VALUATIONS_BY_CODE.items():
-        if code not in out:
-            out[code] = _FallbackValuation(thb, conf)
+    # Fill in missing codes with fallback values (shared starter table).
+    apply_fallback_valuations(out)
     return out
 
 
@@ -177,56 +146,20 @@ async def _fetch_merchant_promos(
     return list((await session.execute(stmt)).scalars().unique().all())
 
 
-# Merchant-category → card-earn-rate-key canonicalization. Merchant categories
-# come from the deal-harvester ontology (`retail`, `dining-restaurants`,
-# `ecommerce`, `grocery`, `travel`, …); card earn_rate_local maps use their
-# own keys (`dining`, `supermarket`, `online`, `travel`, `fuel`, `default`).
-# This table bridges the two so a "grocery" merchant gets the card's
-# "supermarket" rate, a "dining-restaurants" merchant gets "dining", etc.
-# Unmapped categories fall through to `default` (canonical fallback rate).
-_CATEGORY_KEY_ALIASES: dict[str, str] = {
-    "dining-restaurants": "dining",
-    "dining-cafe": "dining",
-    "dining-fastfood": "dining",
-    "dining-buffet": "dining",
-    "fnb": "dining",
-    "food-and-beverage": "dining",
-    "grocery": "supermarket",
-    "supermarket": "supermarket",
-    "convenience": "supermarket",
-    "ecommerce": "online",
-    "online-shopping": "online",
-    "retail": "retail",
-    "department-store": "retail",
-    "retail-fashion": "retail",
-    "travel": "travel",
-    "travel-hotel": "travel",
-    "travel-flight": "travel",
-    "fuel": "fuel",
-    "petrol": "fuel",
-    "transport": "default",
-    "service": "default",
-    "entertainment": "entertainment",
-}
-
-
 def _base_earn_rate_for_category(card: CardModel, category: str | None) -> float:
     """Pull the card's earn rate for this category; fall back to `default`.
 
-    Resolution order:
+    Resolution order (delegated to `valuation_fallback.resolve_earn_rate_key`):
       1. Exact `category` match in `earn_rate_local`.
       2. Canonicalized alias (e.g. `grocery` → `supermarket`) match.
       3. `default` key.
       4. 0.0 (degenerate data — card has no rates at all).
     """
-    rates = card.earn_rate_local or {}
-    if category and category in rates:
-        return float(rates[category])
-    if category:
-        aliased = _CATEGORY_KEY_ALIASES.get(category)
-        if aliased and aliased in rates:
-            return float(rates[aliased])
-    return float(rates.get("default", 0.0))
+    rates: dict[str, float] = {k: float(v) for k, v in (card.earn_rate_local or {}).items()}
+    key = resolve_earn_rate_key(category, rates)
+    if key is None:
+        return 0.0
+    return rates[key]
 
 
 def _promo_applies_to_category(promo: Promo, merchant_category: str | None) -> bool:
@@ -407,7 +340,7 @@ async def rank_cards_for_merchant(
         thb_per_point = float(valuation.thb_per_point) if valuation else 0.0  # type: ignore[attr-defined]
         if valuation is None:
             applied_rules.append("missing_valuation")
-        elif isinstance(valuation, _FallbackValuation):
+        elif isinstance(valuation, FallbackValuation):
             # DB-empty fallback: same shape as a real valuation but synthesized
             # from the starter map. Emit a rule so the UI can render a "~" prefix
             # / tooltip ("estimated, not from weekly compute") if it wants.

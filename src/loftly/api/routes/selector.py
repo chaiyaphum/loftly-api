@@ -77,6 +77,7 @@ from loftly.selector.session_cache import (
     read_session_meta,
     write_session_meta,
 )
+from loftly.services.valuation_fallback import apply_fallback_valuations
 
 router = APIRouter(prefix="/v1/selector", tags=["selector"])
 log = get_logger(__name__)
@@ -228,6 +229,14 @@ async def _load_context(session: AsyncSession) -> SelectorContext:
         # Keep most-recent per currency.
         if code not in valuations_by_code:
             valuations_by_code[code] = valuation
+
+    # DB-empty fallback: ports the PR #38 pattern from
+    # `services/merchant_ranking.py` into the Selector pipeline. When
+    # `point_valuations` has no row for a seeded currency (staging, pre-
+    # weekly-job), synthesize a `FallbackValuation` from the shared starter
+    # table so `monthly_earning_thb_equivalent` is non-zero end-to-end.
+    # Real DB rows always win — `apply_fallback_valuations` only fills gaps.
+    apply_fallback_valuations(valuations_by_code)
 
     active_promos = await _load_promo_snapshot(session)
 
