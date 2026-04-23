@@ -165,7 +165,13 @@ class ProposedMerchant(BaseModel):
 
 
 class UncertainCandidate(BaseModel):
-    merchant_id: str
+    # `merchant_id` is `str | None` because Haiku occasionally returns null
+    # when it knows the raw merchant doesn't match any seeded canonical at all
+    # (e.g., a Thai-only brand with no English alt_name in the seed). The
+    # canonicalizer treats null-id candidates as "no match here, send to admin
+    # queue" — same downstream effect as no candidate at all, but the LLM
+    # still gets to express its confidence band.
+    merchant_id: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)
 
 
