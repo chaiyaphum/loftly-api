@@ -289,9 +289,7 @@ def _coerce_merchant_types(payload: dict[str, Any]) -> dict[str, Any]:
         mt = proposed.get("merchant_type")
         if mt and mt not in _VALID_MERCHANT_TYPES:
             normalized = mt.lower().strip()
-            proposed["merchant_type"] = _MERCHANT_TYPE_FALLBACK_MAP.get(
-                normalized, "retail"
-            )
+            proposed["merchant_type"] = _MERCHANT_TYPE_FALLBACK_MAP.get(normalized, "retail")
     return payload
 
 
