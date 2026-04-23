@@ -454,7 +454,16 @@ async def _apply_llm_result(
         counters["llm_uncertain"] += 1
         counters["review_queue"] += 1
         return
-    best = max(top, key=lambda c: c.confidence)
+    # Drop null-merchant_id candidates (Haiku occasionally emits these to
+    # express "I don't know which seeded merchant" — same effect as no
+    # candidate at all). If they're all null, fall through to the empty path.
+    top_with_id = [c for c in top if c.merchant_id is not None]
+    if not top_with_id:
+        counters["llm_uncertain"] += 1
+        counters["review_queue"] += 1
+        return
+    best = max(top_with_id, key=lambda c: c.confidence)
+    assert best.merchant_id is not None  # narrow for mypy
     merchant = _canonical_by_id(canonicals, best.merchant_id)
     if merchant is None:
         log.warning(
