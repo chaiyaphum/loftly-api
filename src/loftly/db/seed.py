@@ -49,6 +49,87 @@ class SeedStats:
 
 
 # ---------------------------------------------------------------------------
+# Merchant logos — slug → public logo URL.
+#
+# Source: Google's public favicon service (`www.google.com/s2/favicons`) at
+# size=128. Unauthenticated, free, and served from a stable Google CDN, which
+# is acceptable for a seed image-hint (the frontend falls back to a letter
+# monogram when `logo_url` is null or the fetch fails).
+#
+# Why not Clearbit: Clearbit retired their free logo API in Dec 2024; the
+# `logo.clearbit.com` subdomain no longer resolves. Google's favicon service
+# has wider coverage of Thai `.co.th` domains and is the lowest-friction
+# substitute that doesn't require us to upload binary assets into the repo.
+#
+# Each entry pins a canonical domain. For Thai brands we prefer the `.co.th`
+# site where Google indexes one; otherwise we fall back to the corporate
+# parent (e.g. `onesiam.com` for Siam Paragon, `centralretail.com` for the
+# Central group). Merchants with no recognizable favicon on any tried domain
+# are omitted so `MERCHANT_LOGOS.get(slug)` returns `None` and the frontend
+# renders its letter-monogram fallback.
+#
+# Verification: fetch `https://www.google.com/s2/favicons?sz=128&domain={d}`
+# and compare the MD5 to Google's "no favicon" default
+# (`b8a0bf372c762e966cc99ede8682bc71`, 726 bytes). Matches = placeholder globe.
+MERCHANT_LOGOS: dict[str, str] = {
+    "starbucks": "https://www.google.com/s2/favicons?sz=128&domain=starbucks.com",
+    "grab-food": "https://www.google.com/s2/favicons?sz=128&domain=grab.com",
+    "grab-rides": "https://www.google.com/s2/favicons?sz=128&domain=grab.com",
+    "shopee": "https://www.google.com/s2/favicons?sz=128&domain=shopee.co.th",
+    "lazada": "https://www.google.com/s2/favicons?sz=128&domain=lazada.com",
+    "seven-eleven": "https://www.google.com/s2/favicons?sz=128&domain=cpall.co.th",
+    "central-department-store": "https://www.google.com/s2/favicons?sz=128&domain=central.co.th",
+    "central-restaurants-group": "https://www.google.com/s2/favicons?sz=128&domain=centralrestaurants.com",
+    "siam-paragon": "https://www.google.com/s2/favicons?sz=128&domain=onesiam.com",
+    # siam-discovery — parent group (OneSiam) since standalone siamdiscovery.com
+    # has no indexed favicon.
+    "siam-discovery": "https://www.google.com/s2/favicons?sz=128&domain=onesiam.com",
+    "iconsiam": "https://www.google.com/s2/favicons?sz=128&domain=iconsiam.com",
+    "foodpanda": "https://www.google.com/s2/favicons?sz=128&domain=foodpanda.com",
+    "agoda": "https://www.google.com/s2/favicons?sz=128&domain=agoda.com",
+    "booking-com": "https://www.google.com/s2/favicons?sz=128&domain=booking.com",
+    "expedia": "https://www.google.com/s2/favicons?sz=128&domain=expedia.com",
+    "bts": "https://www.google.com/s2/favicons?sz=128&domain=btsc.co.th",
+    "mrt": "https://www.google.com/s2/favicons?sz=128&domain=bemplc.co.th",
+    "tops-supermarket": "https://www.google.com/s2/favicons?sz=128&domain=tops.co.th",
+    "makro": "https://www.google.com/s2/favicons?sz=128&domain=makro.pro",
+    "big-c": "https://www.google.com/s2/favicons?sz=128&domain=bigc.com",
+    "lotuss": "https://www.google.com/s2/favicons?sz=128&domain=lotuss.com",
+    "cp-fresh-mart": "https://www.google.com/s2/favicons?sz=128&domain=cpfm.co.th",
+    "villa-market": "https://www.google.com/s2/favicons?sz=128&domain=villamarket.com",
+    "gourmet-market": "https://www.google.com/s2/favicons?sz=128&domain=gourmetthai.com",
+    "terminal-21": "https://www.google.com/s2/favicons?sz=128&domain=terminal21.co.th",
+    "mbk-center": "https://www.google.com/s2/favicons?sz=128&domain=mbk-center.com",
+    "the-mall": "https://www.google.com/s2/favicons?sz=128&domain=themallgroup.com",
+    "emporium": "https://www.google.com/s2/favicons?sz=128&domain=emquartier.co.th",
+    # robinson — Central Retail parent (standalone robinson.co.th isn't indexed).
+    "robinson": "https://www.google.com/s2/favicons?sz=128&domain=centralretail.com",
+    "esso": "https://www.google.com/s2/favicons?sz=128&domain=esso.co.th",
+    "ptt-station": "https://www.google.com/s2/favicons?sz=128&domain=ptt.com",
+    "shell": "https://www.google.com/s2/favicons?sz=128&domain=shell.co.th",
+    "bangchak": "https://www.google.com/s2/favicons?sz=128&domain=bangchak.co.th",
+    "true-coffee": "https://www.google.com/s2/favicons?sz=128&domain=truecoffee.com",
+    # amazon-cafe (PTT's Cafe Amazon) — intentionally unmapped; no tried domain
+    # returned a non-default icon, so the monogram fallback applies.
+    "au-bon-pain": "https://www.google.com/s2/favicons?sz=128&domain=aubonpain.com",
+    "kfc": "https://www.google.com/s2/favicons?sz=128&domain=kfc.com",
+    "mcdonalds": "https://www.google.com/s2/favicons?sz=128&domain=mcdonalds.com",
+    "pizza-hut": "https://www.google.com/s2/favicons?sz=128&domain=pizzahut.com",
+    "the-pizza-company": "https://www.google.com/s2/favicons?sz=128&domain=1112.com",
+    "mk-suki": "https://www.google.com/s2/favicons?sz=128&domain=mk-restaurant.com",
+    "fuji-restaurant": "https://www.google.com/s2/favicons?sz=128&domain=fuji.co.th",
+    "coca-suki": "https://www.google.com/s2/favicons?sz=128&domain=coca.co.th",
+    "bar-b-q-plaza": "https://www.google.com/s2/favicons?sz=128&domain=barbqplaza.com",
+    "sukishi": "https://www.google.com/s2/favicons?sz=128&domain=sukishi.co.th",
+    "oishi": "https://www.google.com/s2/favicons?sz=128&domain=oishi.com",
+    "jim-thompson": "https://www.google.com/s2/favicons?sz=128&domain=jimthompson.com",
+    "muji-thailand": "https://www.google.com/s2/favicons?sz=128&domain=muji.com",
+    "uniqlo-thailand": "https://www.google.com/s2/favicons?sz=128&domain=uniqlo.com",
+    "hm-thailand": "https://www.google.com/s2/favicons?sz=128&domain=hm.com",
+}
+
+
+# ---------------------------------------------------------------------------
 # Seed data — transcribed from mvp/artifacts/schema.sql seed comments.
 # ---------------------------------------------------------------------------
 
