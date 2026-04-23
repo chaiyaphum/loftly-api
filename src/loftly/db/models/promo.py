@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     text,
 )
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from loftly.db.models import GUID, Base
@@ -73,8 +74,15 @@ class Promo(Base):
     raw_data: Mapped[dict[str, Any]] = mapped_column(
         JSON, nullable=False, server_default=text("'{}'")
     )
+    # Match migration 006's portable type — text[] on Postgres, JSON elsewhere.
+    # Without `with_variant(postgresql.ARRAY)`, INSERTs would send JSON to a
+    # text[] column on PG and fail with `column "relevance_tags" is of type
+    # text[] but expression is of type json`. The seed_batch1_promos data
+    # tripped this on staging deploy 2026-04-23 PM (rolled back twice).
     relevance_tags: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, server_default=text("'[]'")
+        JSON().with_variant(postgresql.ARRAY(Text()), "postgresql"),
+        nullable=False,
+        server_default=text("'[]'"),
     )
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("1"))
     last_synced_at: Mapped[datetime] = mapped_column(
