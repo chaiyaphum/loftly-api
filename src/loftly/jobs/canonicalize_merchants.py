@@ -230,6 +230,71 @@ def _serialize_candidates(candidates: list[CandidatePromo]) -> str:
     )
 
 
+_VALID_MERCHANT_TYPES = {"retail", "fnb", "ecommerce", "travel", "service"}
+# Map Haiku's drift outputs (often KTC category slugs or English descriptors)
+# to the closest valid MerchantType. Anything unmapped → "retail" (the
+# safest catch-all; admin can override via /admin/merchants/{id}).
+_MERCHANT_TYPE_FALLBACK_MAP = {
+    "dining": "fnb",
+    "dining-restaurants": "fnb",
+    "dining-cafe": "fnb",
+    "restaurant": "fnb",
+    "restaurants": "fnb",
+    "cafe": "fnb",
+    "food": "fnb",
+    "shopping": "retail",
+    "department-store": "retail",
+    "supermarket": "retail",
+    "grocery": "retail",
+    "convenience-store": "retail",
+    "online": "ecommerce",
+    "online-shopping-services": "ecommerce",
+    "e-commerce": "ecommerce",
+    "marketplace": "ecommerce",
+    "travel": "travel",
+    "hotels": "travel",
+    "air-ticket-hotels-travel": "travel",
+    "airline": "travel",
+    "transport": "travel",
+    "petrol": "service",
+    "auto-gas-ev": "service",
+    "education": "service",
+    "health-beauty": "service",
+    "insurance-investment": "service",
+    "telecom": "service",
+    "entertainment": "service",
+    "entertainment-hobby": "service",
+    "pet": "service",
+    "sports-fitness": "service",
+    "home-furniture": "retail",
+    "electronics-mobile": "retail",
+    "gold-diamond-jewelry": "retail",
+    "recommended": "retail",
+}
+
+
+def _coerce_merchant_types(payload: dict[str, Any]) -> dict[str, Any]:
+    """Map Haiku's free-text merchant_type into the strict 5-value enum.
+
+    Haiku occasionally returns KTC category slugs (`entertainment-hobby`,
+    `pet`, `dining-restaurants`) instead of one of the 5 enum values. Pydantic
+    rejects those with a literal_error and the whole batch was failing. Coerce
+    via a lookup map; unmapped values default to "retail" so downstream lookup
+    still succeeds. Admin can re-classify via `/v1/admin/merchants/{id}`.
+    """
+    for result in payload.get("results", []):
+        proposed = result.get("proposed")
+        if proposed is None:
+            continue
+        mt = proposed.get("merchant_type")
+        if mt and mt not in _VALID_MERCHANT_TYPES:
+            normalized = mt.lower().strip()
+            proposed["merchant_type"] = _MERCHANT_TYPE_FALLBACK_MAP.get(
+                normalized, "retail"
+            )
+    return payload
+
+
 def _parse_llm_response(raw: str) -> MerchantCanonicalizerOutput:
     """Parse Haiku's JSON response. Tolerates stray whitespace + trailing prose."""
     text = raw.strip()
@@ -237,7 +302,7 @@ def _parse_llm_response(raw: str) -> MerchantCanonicalizerOutput:
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    payload = json.loads(text)
+    payload = _coerce_merchant_types(json.loads(text))
     return MerchantCanonicalizerOutput.model_validate(payload)
 
 
