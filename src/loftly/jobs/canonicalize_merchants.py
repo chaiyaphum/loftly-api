@@ -271,9 +271,14 @@ async def _call_haiku(
     user_text = user_block.strip() or filled.strip()
 
     client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=0)
+    # Bump from 2k → 6k because batches of 20 candidates produce structured
+    # JSON output with proposed.alt_names + reasoning_th per result. Live
+    # staging hit the 2k cap mid-string, returned truncated JSON, every
+    # batch failed with `Unterminated string at line N`. 6k gives ~150 chars
+    # × 20 results × ~10 reasoning lines + alt_names headroom.
     response: Any = await cast(Any, client.messages.create)(
         model=HAIKU_MODEL,
-        max_tokens=2_000,
+        max_tokens=6_000,
         system=[
             {
                 "type": "text",
