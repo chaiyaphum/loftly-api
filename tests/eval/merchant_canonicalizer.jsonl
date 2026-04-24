@@ -1,0 +1,50 @@
+{"raw": "Starbucks", "category_hint": "dining-restaurants", "merchant_id_expected": "starbucks", "action_expected": "match", "notes": "exact EN brand — step 2 exact on slug/display_name_en"}
+{"raw": "STARBUCKS COFFEE", "category_hint": "dining-restaurants", "merchant_id_expected": "starbucks", "action_expected": "match", "notes": "uppercase + suffix already in alt_names — exact after normalize"}
+{"raw": "สตาร์บัคส์", "category_hint": "dining-restaurants", "merchant_id_expected": "starbucks", "action_expected": "match", "notes": "Thai script — in alt_names; exact match"}
+{"raw": "Starbucks TH", "category_hint": "dining-restaurants", "merchant_id_expected": "starbucks", "action_expected": "match", "notes": "TH suffix stripped by normalize; alt_names hit"}
+{"raw": "Starbuck's", "category_hint": "dining-restaurants", "merchant_id_expected": "starbucks", "action_expected": "match", "notes": "apostrophe + missing s — fuzzy or LLM; conf >= 0.9 expected"}
+{"raw": "สตาร์บัก", "category_hint": "dining-restaurants", "merchant_id_expected": "starbucks", "action_expected": "match", "notes": "truncated Thai transliteration — requires LLM (Thai phonetic match)"}
+{"raw": "Starbucks Thailand Co., Ltd.", "category_hint": "dining-restaurants", "merchant_id_expected": "starbucks", "action_expected": "match", "notes": "corporate suffixes stripped by _SUFFIX_TOKENS"}
+{"raw": "Grab", "category_hint": null, "merchant_id_expected": "grab-rides", "action_expected": "match", "notes": "bare Grab + no category -> default ride-hailing canonical"}
+{"raw": "แกร็บ", "category_hint": null, "merchant_id_expected": "grab-rides", "action_expected": "match", "notes": "Thai transliteration of Grab — display_name_th exact"}
+{"raw": "GRAB TAXI", "category_hint": null, "merchant_id_expected": "grab-rides", "action_expected": "match", "notes": "GrabTaxi alt_name variant — exact after normalize"}
+{"raw": "Grab Food", "category_hint": "dining-restaurants", "merchant_id_expected": "grab-food", "action_expected": "match", "notes": "distinct canonical for food-delivery vs rides"}
+{"raw": "GrabFood", "category_hint": "dining-restaurants", "merchant_id_expected": "grab-food", "action_expected": "match", "notes": "compound variant — alt_names hit"}
+{"raw": "แกร็บฟู้ด", "category_hint": "dining-restaurants", "merchant_id_expected": "grab-food", "action_expected": "match", "notes": "Thai compound — alt_names hit"}
+{"raw": "7-Eleven", "category_hint": "grocery", "merchant_id_expected": "seven-eleven", "action_expected": "match", "notes": "brand with hyphen — exact on display_name_en"}
+{"raw": "7-11", "category_hint": "grocery", "merchant_id_expected": "seven-eleven", "action_expected": "match", "notes": "shorthand in alt_names"}
+{"raw": "เซเว่น", "category_hint": "grocery", "merchant_id_expected": "seven-eleven", "action_expected": "match", "notes": "Thai shorthand in alt_names"}
+{"raw": "Shopee TH", "category_hint": "shopping", "merchant_id_expected": "shopee", "action_expected": "match", "notes": "region suffix dropped by normalize"}
+{"raw": "ลาซาด้า", "category_hint": "shopping", "merchant_id_expected": "lazada", "action_expected": "match", "notes": "Thai script brand — display_name_th hit"}
+{"raw": "KFC Thailand", "category_hint": "dining-restaurants", "merchant_id_expected": "kfc", "action_expected": "match", "notes": "Thailand suffix stripped"}
+{"raw": "McDonald's", "category_hint": "dining-restaurants", "merchant_id_expected": "mcdonalds", "action_expected": "match", "notes": "apostrophe stripped — display_name_en exact"}
+{"raw": "Sukishi Korean Charcoal Grill", "category_hint": "dining-restaurants", "merchant_id_expected": "sukishi", "action_expected": "match", "notes": "long-form name — in alt_names; exact match"}
+{"raw": "ร้านอาหารญี่ปุ่น Sukishi", "category_hint": "dining-restaurants", "merchant_id_expected": "sukishi", "action_expected": "match", "notes": "Thai descriptor prefix but brand token exact — LLM should isolate brand"}
+{"raw": "Sukiyaki House", "category_hint": "dining-restaurants", "merchant_id_expected": null, "action_expected": "create", "notes": "Sukiyaki != Sukishi — similar string but DIFFERENT brand; tests that fuzzy does NOT over-match"}
+{"raw": "BigC Mini", "category_hint": "grocery", "merchant_id_expected": "big-c", "action_expected": "match", "notes": "Mini is a format variant of Big C — should still map to canonical big-c"}
+{"raw": "Big C Supercenter", "category_hint": "grocery", "merchant_id_expected": "big-c", "action_expected": "match", "notes": "alt_name exact — same canonical as Big C"}
+{"raw": "Tesco Lotus", "category_hint": "grocery", "merchant_id_expected": "lotuss", "action_expected": "match", "notes": "pre-rebrand name — in alt_names"}
+{"raw": "โลตัส โกลด์", "category_hint": "grocery", "merchant_id_expected": "lotuss", "action_expected": "match", "notes": "Lotus's Gold format variant — LLM should match parent"}
+{"raw": "Tops Daily", "category_hint": "grocery", "merchant_id_expected": "tops-supermarket", "action_expected": "match", "notes": "smaller-format Tops — fuzzy/LLM should map to tops-supermarket"}
+{"raw": "Central Food Hall", "category_hint": "grocery", "merchant_id_expected": "tops-supermarket", "action_expected": "match", "notes": "Central Food Hall is operated by Tops — judgment call: map to Tops since it's the supermarket brand"}
+{"raw": "McDonalds Drive-Thru", "category_hint": "dining-restaurants", "merchant_id_expected": "mcdonalds", "action_expected": "match", "notes": "format suffix — fuzzy should still match mcdonalds"}
+{"raw": "Pizza Hut Delivery", "category_hint": "dining-restaurants", "merchant_id_expected": "pizza-hut", "action_expected": "match", "notes": "channel suffix dropped"}
+{"raw": "The Pizza Company TH", "category_hint": "dining-restaurants", "merchant_id_expected": "the-pizza-company", "action_expected": "match", "notes": "Thailand-branded Minor Food chain — distinct from Pizza Hut"}
+{"raw": "Cafe Amazon ปตท.", "category_hint": "dining-restaurants", "merchant_id_expected": "amazon-cafe", "action_expected": "match", "notes": "Thai PTT suffix — LLM should recognise parent chain, NOT amazon.com"}
+{"raw": "MK Restaurant", "category_hint": "dining-restaurants", "merchant_id_expected": "mk-suki", "action_expected": "match", "notes": "alt_names exact — MK Suki canonical"}
+{"raw": "MUJI Thailand", "category_hint": "shopping", "merchant_id_expected": "muji-thailand", "action_expected": "match", "notes": "Thailand suffix — display_name_en partial; fuzzy or exact after normalize"}
+{"raw": "H&M Bangkok", "category_hint": "shopping", "merchant_id_expected": "hm-thailand", "action_expected": "match", "notes": "Bangkok region suffix not in normalize list — LLM fallback"}
+{"raw": "Yayoi Japanese Restaurant", "category_hint": "dining-restaurants", "merchant_id_expected": null, "action_expected": "create", "notes": "Yayoi is Central Restaurants Group brand, not individually seeded — LLM should propose new merchant"}
+{"raw": "After You Dessert Cafe", "category_hint": "dining-restaurants", "merchant_id_expected": null, "action_expected": "create", "notes": "popular Thai dessert chain — not seeded; new merchant"}
+{"raw": "Nitori", "category_hint": "shopping", "merchant_id_expected": null, "action_expected": "create", "notes": "Japanese furniture chain newly expanded to TH — not seeded"}
+{"raw": "Don Don Donki", "category_hint": "shopping", "merchant_id_expected": null, "action_expected": "create", "notes": "Japanese discount store at EmSphere — not seeded; new merchant"}
+{"raw": "AIS Shop", "category_hint": null, "merchant_id_expected": null, "action_expected": "create", "notes": "telecom retail — not seeded; merchant_type=service"}
+{"raw": "Boots Thailand", "category_hint": null, "merchant_id_expected": null, "action_expected": "create", "notes": "health+beauty retail — not seeded; new merchant"}
+{"raw": "Watsons", "category_hint": null, "merchant_id_expected": null, "action_expected": "create", "notes": "health+beauty retail — not seeded; new merchant"}
+{"raw": "Decathlon", "category_hint": "shopping", "merchant_id_expected": null, "action_expected": "create", "notes": "sporting goods retail — not seeded; new merchant"}
+{"raw": "After You x Shiroi Koibito", "category_hint": "dining-restaurants", "merchant_id_expected": null, "action_expected": "create", "notes": "limited-edition collab — judgment call: treat as new merchant since no parent canonical exists"}
+{"raw": "Central", "category_hint": null, "merchant_id_expected": null, "action_expected": "ambiguous", "notes": "RULE 1: Central alone is ambiguous — Central Dept Store vs Central Restaurants Group vs Centara Hotels. No category hint → uncertain"}
+{"raw": "Shell", "category_hint": null, "merchant_id_expected": null, "action_expected": "ambiguous", "notes": "petrol station vs Shell Select convenience store inside station — neither seeded separately; LLM should flag uncertain"}
+{"raw": "Big C / Tops", "category_hint": "grocery", "merchant_id_expected": null, "action_expected": "ambiguous", "notes": "co-branded promo naming two canonicals — LLM must split or flag uncertain; not a single merchant_id"}
+{"raw": "สัมผัสอาหาร", "category_hint": "dining-restaurants", "merchant_id_expected": null, "action_expected": "ambiguous", "notes": "generic Thai noun ('touch the food') — not a brand name; LLM should return uncertain with low conf"}
+{"raw": "PTT", "category_hint": null, "merchant_id_expected": null, "action_expected": "ambiguous", "notes": "PTT is petrol (ptt-station) + Cafe Amazon parent + OR-group retail. 'PTT' alone without category is ambiguous — expect uncertain"}
