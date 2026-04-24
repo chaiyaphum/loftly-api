@@ -472,3 +472,118 @@ def test_classify_503() -> None:
 
 def test_classify_other() -> None:
     assert _classify_sonnet_error(ValueError("boom")) == "both_failed"
+
+
+# ---------------------------------------------------------------------------
+# DEVLOG 2026-04-24 Known Issue §1 — fallback-first kill-switch +
+# repr() timeout instrumentation.
+# ---------------------------------------------------------------------------
+
+
+async def test_fallback_first_forced_bypasses_anthropic(
+    seeded_db: object,
+    activate_anthropic: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With `LOFTLY_FF_SELECTOR_FALLBACK_FIRST=true`, Sonnet + Haiku must not
+    be called even when provider.name == "anthropic".
+
+    Pins the founder's kill-switch behavior from DEVLOG Known Issue §1 option
+    D: "flip the order to fallback-first temporarily so the UX is < 1s".
+    """
+    _ = seeded_db
+    _ = activate_anthropic
+
+    monkeypatch.setenv("LOFTLY_FF_SELECTOR_FALLBACK_FIRST", "true")
+    get_settings.cache_clear()
+
+    context = await _load_context()
+
+    # If *either* Anthropic provider gets called, fail the test loudly.
+    sonnet_mock = AsyncMock(side_effect=AssertionError("Sonnet must be skipped"))
+    monkeypatch.setattr(AnthropicProvider, "card_selector", sonnet_mock)
+    from loftly.ai.providers import anthropic_haiku
+
+    haiku_mock = AsyncMock(side_effect=AssertionError("Haiku must be skipped"))
+    monkeypatch.setattr(anthropic_haiku.AnthropicHaikuProvider, "card_selector", haiku_mock)
+
+    result = await _run_with_fallback(_base_payload(), context)
+
+    sonnet_mock.assert_not_called()
+    haiku_mock.assert_not_called()
+    assert result.used_fallback is True
+    assert result.used_deterministic is True
+    assert result.fallback_reason == "both_failed"
+    assert result.llm_model == "deterministic"
+    assert any("fallback_first_forced" in w for w in result.warnings), (
+        f"expected `fallback_first_forced` marker in warnings; got {result.warnings!r}"
+    )
+
+
+async def test_sonnet_timeout_logs_repr_and_wait_for_flag(
+    seeded_db: object,
+    activate_anthropic: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty-message TimeoutError must still be identifiable in the log.
+
+    `str(asyncio.TimeoutError())` is `""`, which is how we ended up with
+    `error: ""` in DO logs. Assert we're now logging `error_repr` (which
+    always includes the class name) and a `wait_for_tripped=True` boolean.
+
+    structlog is configured with `PrintLoggerFactory`, so stdlib `caplog`
+    does not capture these events. Instead we install a fake
+    `BoundLogger.warning` that records the kwargs and assert against it —
+    same contract, observable without reconfiguring the whole logging stack.
+    """
+    _ = seeded_db
+    _ = activate_anthropic
+
+    context = await _load_context()
+
+    async def _hang(*_args: Any, **_kwargs: Any) -> None:
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(AnthropicProvider, "card_selector", _hang)
+    monkeypatch.setattr("loftly.api.routes.selector._SONNET_TIMEOUT_SEC", 0.05)
+
+    # Short-circuit Haiku so the test stays fast — its behavior isn't the
+    # subject of this assertion.
+    from loftly.ai.providers import anthropic_haiku
+
+    haiku_mock = AsyncMock(side_effect=_sonnet_503())
+    monkeypatch.setattr(anthropic_haiku.AnthropicHaikuProvider, "card_selector", haiku_mock)
+
+    captured_warnings: list[tuple[str, dict[str, Any]]] = []
+
+    from loftly.api.routes import selector as selector_module
+
+    original_warning = selector_module.log.warning
+
+    def _fake_warning(event: str, **kwargs: Any) -> None:
+        captured_warnings.append((event, kwargs))
+        # Still call through so structlog's sink logic runs (shouldn't raise).
+        original_warning(event, **kwargs)
+
+    monkeypatch.setattr(selector_module.log, "warning", _fake_warning)
+
+    await _run_with_fallback(_base_payload(), context)
+
+    sonnet_fallback_events = [
+        kwargs for event, kwargs in captured_warnings if event == "selector_sonnet_fallback"
+    ]
+    assert sonnet_fallback_events, (
+        f"expected a `selector_sonnet_fallback` warning event; captured events: "
+        f"{[e for e, _ in captured_warnings]!r}"
+    )
+    kw = sonnet_fallback_events[0]
+    error_repr = kw.get("error_repr")
+    assert error_repr is not None, f"log kwargs missing `error_repr`; got {kw!r}"
+    # repr() of TimeoutError always contains the class name even when args are ().
+    assert "TimeoutError" in error_repr, (
+        f"expected `TimeoutError` in error_repr; got {error_repr!r}"
+    )
+    assert kw.get("wait_for_tripped") is True, (
+        f"expected `wait_for_tripped=True`; got {kw.get('wait_for_tripped')!r}"
+    )
+    assert kw.get("error_class") == "TimeoutError"
