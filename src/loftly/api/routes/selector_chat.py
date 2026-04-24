@@ -195,6 +195,41 @@ def _estimate_chat_cost_thb(system: str, user: str) -> float:
     return cost_usd * _USD_TO_THB
 
 
+def _classify_haiku_chat_error(exc: BaseException) -> str:
+    """Classify a Haiku chat exception into a structured log tag.
+
+    Mirrors `selector.py:_classify_sonnet_error` so dashboard/alert queries
+    use the same vocabulary across both LLM paths. Buckets:
+
+    - `timeout`      → `asyncio.TimeoutError` (wait_for tripped) or the SDK
+                       `anthropic.APITimeoutError`
+    - `rate_limit`   → HTTP 429 / `anthropic.RateLimitError`
+    - `upstream_5xx` → HTTP 5xx from `anthropic.APIStatusError`
+    - `sdk_error`    → any other `anthropic.APIStatusError`
+    - `unknown`      → catch-all (network, parser, misconfig, etc.)
+
+    Pure function — keeps classification independent of the SDK being
+    importable (stub/test environments don't pay the import cost).
+    """
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    try:
+        import anthropic as _anthropic
+    except ImportError:  # pragma: no cover — SDK is a pinned dep
+        return "unknown"
+
+    if isinstance(exc, _anthropic.APITimeoutError):
+        return "timeout"
+    if isinstance(exc, _anthropic.RateLimitError):
+        return "rate_limit"
+    if isinstance(exc, _anthropic.APIStatusError):
+        status_code = getattr(exc, "status_code", None)
+        if status_code is not None and 500 <= int(status_code) < 600:
+            return "upstream_5xx"
+        return "sdk_error"
+    return "unknown"
+
+
 async def _call_haiku_chat(
     system: str,
     user: str,
@@ -205,13 +240,20 @@ async def _call_haiku_chat(
     fallback). The provider here is a chat-mode shim — the selector path's
     Haiku provider uses tool-use for structured stack output, which is the
     wrong shape for a free-form Q&A answer.
+
+    Matches the pattern used by `anthropic_haiku.AnthropicHaikuProvider`:
+    `max_retries=0` so the route-level `asyncio.wait_for(..., timeout=5.0)`
+    is the authoritative retry/timeout policy (SDK-level retries would
+    double-bill and mask the 5s endpoint budget).
     """
     from loftly.ai.providers.anthropic import _should_use_real_anthropic
     from loftly.ai.providers.anthropic_haiku import HAIKU_MODEL
 
     if not _should_use_real_anthropic():
         # Stub path: deterministic canned answer so tests without ANTHROPIC_API_KEY
-        # can still exercise the route end-to-end.
+        # can still exercise the route end-to-end. Keep this branch intact —
+        # it's also what the post-v1 selector-chat surface relies on until the
+        # broader selector Anthropic timeout (Known Issue §1) is resolved.
         return {
             "answer_th": "นี่คือคำตอบจำลอง (ยังไม่ได้ต่อ Haiku จริง)",
             "answer_en": "Stubbed answer (real Haiku not wired).",
@@ -241,6 +283,20 @@ async def _call_haiku_chat(
     answer = "\n".join(chunks).strip()
     if not answer:
         answer = _HAIKU_FALLBACK_TH
+
+    # Log observability on success — input/output tokens + model for parity
+    # with the `anthropic_haiku_selector_call` event. Cost is estimated
+    # post-hoc from usage so we capture the *actual* bill, not the pre-flight.
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    log.info(
+        "selector_chat_haiku_call",
+        model=HAIKU_MODEL,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+
     return {"answer_th": answer, "answer_en": None}
 
 
@@ -515,6 +571,12 @@ async def chat(
         )
     else:
         # 9) Haiku call under a 5s timeout. Any failure → static fallback.
+        #    Classification mirrors `selector.py:_classify_sonnet_error` so
+        #    dashboards/alerts can share the same error taxonomy across the
+        #    Sonnet selector path and the Haiku chat path. We catch
+        #    BaseException to also cover `asyncio.CancelledError` that a
+        #    hanging SDK call can surface when `wait_for` trips — still
+        #    degrading to the static fallback without propagating.
         try:
             reply = await asyncio.wait_for(
                 _call_haiku_chat(prompt.system, prompt.user),
@@ -522,8 +584,16 @@ async def chat(
             )
             answer_th = reply.get("answer_th") or _HAIKU_FALLBACK_TH
             answer_en = reply.get("answer_en")
-        except (TimeoutError, Exception) as exc:
-            log.warning("selector_chat_haiku_fallback", error=str(exc)[:200])
+        except BaseException as exc:
+            # Re-raise KeyboardInterrupt / SystemExit — those aren't Haiku errors.
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            reason = _classify_haiku_chat_error(exc)
+            log.warning(
+                "selector_chat_haiku_fallback",
+                reason=reason,
+                error=str(exc)[:200],
+            )
 
     # 10) Build diff + response.
     cards_changed = False
@@ -552,4 +622,10 @@ async def chat(
     )
 
 
-__all__ = ["ChatRequest", "ChatResponse", "router"]
+__all__ = [
+    "ChatRequest",
+    "ChatResponse",
+    "_call_haiku_chat",
+    "_classify_haiku_chat_error",
+    "router",
+]
