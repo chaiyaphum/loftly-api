@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -318,6 +319,39 @@ def _estimate_haiku_cost_thb(context: SelectorContext) -> float:
     return cost_usd * _USD_TO_THB
 
 
+async def _timed_sonnet_call(
+    provider: LLMProvider,
+    payload: SelectorInput,
+    context: SelectorContext,
+) -> SelectorResult:
+    """Wrap a single Sonnet call with `asyncio.wait_for` + timing telemetry.
+
+    DEVLOG 2026-04-24 Known Issue §1 — we need to tell apart:
+      (a) SDK returned fast with an auth/network error (ms << timeout), and
+      (b) SDK hung until `wait_for` tripped (ms ≈ timeout).
+    Logging `anthropic_sonnet_ms` on *both* success and failure paths lets us
+    eyeball that in DO logs without a tracer.
+    """
+    started = time.monotonic()
+    outer_timeout_hit = False
+    try:
+        return await asyncio.wait_for(
+            provider.card_selector(payload, context),
+            timeout=_SONNET_TIMEOUT_SEC,
+        )
+    except TimeoutError:
+        outer_timeout_hit = True
+        raise
+    finally:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        log.info(
+            "anthropic_sonnet_call_timing",
+            anthropic_sonnet_ms=elapsed_ms,
+            timeout_budget_ms=int(_SONNET_TIMEOUT_SEC * 1000),
+            wait_for_tripped=outer_timeout_hit,
+        )
+
+
 async def _call_sonnet_with_retry(
     provider: LLMProvider,
     payload: SelectorInput,
@@ -328,19 +362,13 @@ async def _call_sonnet_with_retry(
     Any other error propagates to the caller for classification.
     """
     try:
-        return await asyncio.wait_for(
-            provider.card_selector(payload, context),
-            timeout=_SONNET_TIMEOUT_SEC,
-        )
+        return await _timed_sonnet_call(provider, payload, context)
     except BaseException as exc:
         if _classify_sonnet_error(exc) != "rate_limit":
             raise
         log.warning("selector_sonnet_429_retry", backoff_sec=_SONNET_RETRY_BACKOFF_SEC)
         await asyncio.sleep(_SONNET_RETRY_BACKOFF_SEC)
-        return await asyncio.wait_for(
-            provider.card_selector(payload, context),
-            timeout=_SONNET_TIMEOUT_SEC,
-        )
+        return await _timed_sonnet_call(provider, payload, context)
 
 
 async def _deterministic_fallback(
@@ -373,6 +401,11 @@ async def _run_with_fallback(
     """Sonnet → Haiku → deterministic, honoring AI_PROMPTS.md §Failure policy.
 
     Policy:
+    0. Kill-switch: if `LOFTLY_FF_SELECTOR_FALLBACK_FIRST` is ON, skip both
+       LLM tiers entirely and return the deterministic result immediately
+       with `fallback_reason="both_failed"` and a `fallback_first_forced`
+       warning. Added 2026-04-24 per DEVLOG Known Issue §1 option D — lets
+       us give a sub-second UX while Anthropic is unreachable from DO SGP.
     1. Call Sonnet under a 10s asyncio timeout.
     2. Classify any exception via `_classify_sonnet_error`.
        - `rate_limit` → retry once after `_SONNET_RETRY_BACKOFF_SEC` seconds.
@@ -391,6 +424,21 @@ async def _run_with_fallback(
     if provider.name != "anthropic":
         return await provider.card_selector(payload, context)
 
+    # 0) Kill-switch — founder-requested escape hatch for the Known Issue §1
+    # Anthropic outage from DO Singapore. When flipped ON via env var we bypass
+    # both LLM tiers so the UX is sub-second; classify as `both_failed` for
+    # metrics continuity, and surface `fallback_first_forced` in warnings so
+    # traces can tell this apart from real LLM failures.
+    settings = get_settings()
+    if getattr(settings, "loftly_ff_selector_fallback_first", False):
+        log.warning("selector_fallback_first_forced")
+        return await _deterministic_fallback(
+            payload,
+            context,
+            warnings=["fallback_first_forced"],
+            fallback_reason="both_failed",
+        )
+
     warnings: list[str] = []
     fallback_reason: FallbackReason | None = None
 
@@ -401,19 +449,22 @@ async def _run_with_fallback(
             return result
         # Quality gate failed once — retry; if still bad, fall through to Haiku.
         log.warning("selector_sonnet_quality_retry")
-        result = await asyncio.wait_for(
-            provider.card_selector(payload, context),
-            timeout=_SONNET_TIMEOUT_SEC,
-        )
+        result = await _timed_sonnet_call(provider, payload, context)
         if _validate_earning_consistency(result, context):
             return result
         warnings.append("quality_gate_drift")
         fallback_reason = "both_failed"
     except BaseException as exc:
         fallback_reason = _classify_sonnet_error(exc)
+        # repr() — NOT str() — captures the exception class even when the
+        # underlying message is empty (e.g. `asyncio.TimeoutError()` stringifies
+        # to ""). DEVLOG 2026-04-24 Known Issue §1: prior logs showed
+        # `error: ""` which hid the fact that `wait_for` was tripping.
         log.warning(
             "selector_sonnet_fallback",
-            error=str(exc)[:200],
+            error_repr=repr(exc)[:400],
+            error_class=type(exc).__name__,
+            wait_for_tripped=isinstance(exc, TimeoutError),
             reason=fallback_reason,
         )
         warnings.append(f"sonnet_fallback:{fallback_reason}")
@@ -433,7 +484,9 @@ async def _run_with_fallback(
             fallback_reason="cost_cap",
         )
 
-    # 3) Try Haiku.
+    # 3) Try Haiku — timed like Sonnet so we can tell apart fast SDK errors
+    # from `wait_for` cancellations in DO logs.
+    haiku_started = time.monotonic()
     try:
         from loftly.ai.providers.anthropic_haiku import AnthropicHaikuProvider
 
@@ -441,6 +494,12 @@ async def _run_with_fallback(
         result = await asyncio.wait_for(
             haiku.card_selector(payload, context),
             timeout=_HAIKU_TIMEOUT_SEC,
+        )
+        log.info(
+            "anthropic_haiku_call_timing",
+            anthropic_haiku_ms=int((time.monotonic() - haiku_started) * 1000),
+            timeout_budget_ms=int(_HAIKU_TIMEOUT_SEC * 1000),
+            wait_for_tripped=False,
         )
         # Haiku succeeded: stamp used_fallback + the classified Sonnet reason.
         return result.model_copy(
@@ -452,7 +511,15 @@ async def _run_with_fallback(
             }
         )
     except BaseException as exc:
-        log.warning("selector_haiku_fallback", error=str(exc)[:200])
+        haiku_elapsed_ms = int((time.monotonic() - haiku_started) * 1000)
+        log.warning(
+            "selector_haiku_fallback",
+            error_repr=repr(exc)[:400],
+            error_class=type(exc).__name__,
+            wait_for_tripped=isinstance(exc, TimeoutError),
+            anthropic_haiku_ms=haiku_elapsed_ms,
+            timeout_budget_ms=int(_HAIKU_TIMEOUT_SEC * 1000),
+        )
         warnings.append("haiku_fallback")
 
     # 4) Deterministic last resort — both LLMs failed.

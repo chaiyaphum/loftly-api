@@ -129,6 +129,16 @@ class Settings(BaseSettings):
     # `.claude/plans/.../iverson.md §1.9 Rollout`.
     loftly_ff_selector_promo_context: bool = Field(default=False)
 
+    # DEVLOG 2026-04-23 (evening) Known Issue §1 — Anthropic Sonnet+Haiku
+    # both time out from DO Singapore, making `/v1/selector` ~15s on happy
+    # path. When ON, `_run_with_fallback` skips Sonnet + Haiku entirely and
+    # returns the deterministic result immediately — trading LLM quality for
+    # sub-second UX while the upstream is unreachable. Result still stamps
+    # `fallback_reason="both_failed"` so downstream metrics account for it;
+    # additionally emits a `fallback_first_forced` warning so we can tell
+    # "flag ON" from "both LLMs actually failed" in traces. Default OFF.
+    loftly_ff_selector_fallback_first: bool = Field(default=False)
+
     # POST_V1 §9 Workstream B (ratified 2026-04-22 Q18) — Merchant Reverse
     # Lookup. Gates both the `/v1/merchants/*` read surface and the
     # `canonicalize_merchants` daily job. Flipped to default-ON 2026-04-22
