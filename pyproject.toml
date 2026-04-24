@@ -130,8 +130,14 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# Default CI excludes eval-marked tests — they hit real Anthropic and take
+# tens of seconds. Opt in with `pytest -m eval` + LOFTLY_RUN_EVAL=1.
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+addopts = "-m 'not eval'"
+markers = [
+    "eval: slow offline golden-set evals (see tests/eval/README.md) — excluded from default CI",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
