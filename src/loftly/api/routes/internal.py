@@ -17,9 +17,10 @@ already carries it.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Response, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -133,27 +134,82 @@ async def run_valuation(
     return {"job_id": "valuation", "status": "queued"}
 
 
+class CacheWarmRequest(BaseModel):
+    """Optional request body for `POST /v1/internal/cache-warm`.
+
+    - `scope=None` (default) — legacy behavior: ping Sonnet once to keep the
+      server-side prompt-prefix cache hot.
+    - `scope="selector_personas"` — iterate the 120-persona warm-up matrix
+      (`jobs.selector_warm_personas.build_persona_payloads`), calling the
+      internal `_compute_or_get_cached` directly so each persona's result
+      lands in Redis under `selector:{profile_hash}` with the standard 24h
+      TTL. Added 2026-04-24 per DEVLOG Known Issue §1 option (c) — warm the
+      result cache so most first-time submissions hit <0.3s instead of the
+      15s cold-path Anthropic round-trip.
+    """
+
+    scope: Literal["selector_personas"] | None = None
+
+
 @router.post(
     "/cache-warm",
-    summary="Ping Sonnet to keep the cached card-catalog prefix alive",
+    summary="Keep the Anthropic prompt prefix and/or Selector result cache hot",
 )
 async def cache_warm(
+    body: CacheWarmRequest | None = None,
     _auth: None = Depends(require_internal_api_key),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Cron-driven cache warmer per AI_PROMPTS.md §Cache warming.
 
-    CF Worker cron hits this every 4 min during business hours. The call
-    reuses the real AnthropicProvider's cached-context serialization so the
-    server-side prompt cache stays hot; when ANTHROPIC_API_KEY is unset we
-    short-circuit to `warmed: false` (no-op in stub mode).
+    Two modes, selected via the request body:
+
+    * **Legacy (default / no body / `{}`):** pings Sonnet with the cached
+      card-catalog prefix so the server-side Anthropic prompt-prefix cache
+      stays hot. Short-circuits to `warmed:false` when ANTHROPIC_API_KEY is
+      unset.
+    * **`{"scope": "selector_personas"}`:** runs `_compute_or_get_cached`
+      against the 120-persona matrix so their `SelectorResult`s are written
+      into Redis (`selector:{profile_hash}`, 24h TTL). Reuses the normal
+      Selector fallback chain end-to-end — this is intentional so a warm
+      entry renders identically to an on-demand entry; the cron is a
+      latency preload, not a shortcut path.
     """
     import time
 
+    start = time.perf_counter()
+
+    # Route to the selector-persona warmer when requested. The persona path
+    # uses the internal selector compute function directly (NOT a fresh
+    # HTTP round-trip), so it writes the exact same cache entries a real
+    # user request would — hits on the cached key return the cached envelope
+    # verbatim.
+    if body is not None and body.scope == "selector_personas":
+        from loftly.api.routes.selector import _compute_or_get_cached
+        from loftly.jobs.selector_warm_personas import build_persona_payloads
+
+        payloads = build_persona_payloads()
+        errors = 0
+        warmed = 0
+        for persona in payloads:
+            try:
+                await _compute_or_get_cached(persona, session)
+                warmed += 1
+            except BaseException:
+                # Swallow per-persona so a single bad payload doesn't abort
+                # the whole 120-iteration warm-up. Individual failures surface
+                # in per-request logs already (selector_sonnet_fallback, etc.).
+                errors += 1
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        return {
+            "warmed": warmed,
+            "errors": errors,
+            "elapsed_ms": round(elapsed_ms, 2),
+        }
+
+    # Legacy prompt-prefix warm path.
     from loftly.ai.providers.anthropic import _should_use_real_anthropic
     from loftly.api.routes.selector import _load_context
-
-    start = time.perf_counter()
 
     if not _should_use_real_anthropic():
         return {
