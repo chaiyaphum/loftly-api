@@ -1,7 +1,8 @@
 """One-shot script: finalize every due account-delete job.
 
 Phase 1 invocation model: founder runs this manually after checking the
-Fly.io logs. Phase 2 will wire it to a daily cron inside Fly.
+DO App Platform runtime logs (`doctl apps logs <app_id>`). Phase 2 will wire
+it to a daily schedule (DO App Platform job / Cloudflare Worker cron).
 
     uv run python -m scripts.run_purges
 """
