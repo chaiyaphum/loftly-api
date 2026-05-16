@@ -11,7 +11,7 @@ This is the Phase 1 MVP backend. The full specification lives in the sibling
 - `../loftly/mvp/SCHEMA.md` — 14 tables
 - `../loftly/mvp/artifacts/openapi.yaml` — OpenAPI 3.1 contract (source of truth)
 - `../loftly/mvp/artifacts/schema.sql` — executable DDL
-- `../loftly/mvp/DEPLOYMENT.md` — Fly.io target + env vars
+- `../loftly/mvp/DEPLOYMENT.md` — DigitalOcean App Platform target + env vars
 
 ## Stack
 
@@ -83,8 +83,8 @@ never rely on hand-crafted fixtures in route code.
 
 ## Deploy
 
-Fly.io target — see `fly.toml` and `../loftly/mvp/DEPLOYMENT.md`.
-
-```bash
-fly deploy --remote-only
-```
+DigitalOcean App Platform target. The `loftly-api-staging` app has
+`deploy_on_push: true` on `main` — pushing to `main` builds the Dockerfile,
+runs the PRE_DEPLOY `alembic upgrade head` job, and rolls out automatically.
+No local deploy command. Full runbook: `../loftly/mvp/artifacts/do/README.md`.
+Disaster recovery / restore: `scripts/dr/README.md`.

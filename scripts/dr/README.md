@@ -39,7 +39,8 @@ Generate a fresh encryption key on any machine with Python:
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Store the key in Fly secrets (`fly secrets set LOFTLY_DR_ENCRYPTION_KEY=...`)
+Store the key as a DO App Platform secret env var on `loftly-api-staging`
+(`doctl apps update <app_id> --spec ...` with `LOFTLY_DR_ENCRYPTION_KEY`)
 **and** in the founder's 1Password vault. Losing it = losing the snapshots.
 
 Create the R2 bucket with Object Lock enabled via the Cloudflare dashboard or
@@ -48,7 +49,7 @@ Lock must be enabled at bucket creation — it cannot be toggled on later.
 
 ## Cadence
 
-- **Prod snapshot** — daily at 04:00 UTC (cron on Fly).
+- **Prod snapshot** — daily at 04:00 UTC (DO App Platform scheduled job / Cloudflare Worker cron).
 - **Staging snapshot** — daily at 04:15 UTC.
 - **Drill** — weekly on Monday 05:00 UTC; restores the latest staging snapshot
   into a scratch DB on the staging cluster, verifies row counts, drops.
@@ -57,8 +58,15 @@ Lock must be enabled at bucket creation — it cannot be toggled on later.
 
 ## Runbook — "The prod DB is gone"
 
-1. Spin up a new Fly Postgres cluster (`fly postgres create ...`). Note the
-   connection string.
+1. Recreate the DO Managed Postgres cluster + DB + app user, then note the
+   connection string (full procedure: `../../../loftly/mvp/artifacts/do/README.md`):
+   ```sh
+   doctl databases create loftly-staging --engine pg --version 16 --region sgp1 --size db-s-1vcpu-1gb --num-nodes 1
+   DB_ID=$(doctl databases list --format ID,Name --no-header | awk '$2=="loftly-staging"{print $1}')
+   doctl databases db create   "$DB_ID" loftly_prod
+   doctl databases user create "$DB_ID" loftly_prod_app
+   # then run the schema GRANT block from loftly/mvp/artifacts/do/README.md as doadmin
+   ```
 2. From a workstation with R2 creds + `LOFTLY_DR_ENCRYPTION_KEY`:
    ```sh
    uv run python -m scripts.dr.list_snapshots --env prod --limit 5
@@ -72,8 +80,12 @@ Lock must be enabled at bucket creation — it cannot be toggled on later.
        --target-database-url postgresql://... \
        --really-prod
    ```
-4. Point the API at the new cluster (`fly secrets set DATABASE_URL=...`).
-5. Redeploy (`fly deploy`). Smoke-test `/health`.
+4. Point the API at the new cluster: update the `DATABASE_URL` secret on the
+   `loftly-api-staging` app spec and apply (`doctl apps update <app_id> --spec /tmp/...`),
+   and re-append the app as a DB trusted source
+   (`doctl databases firewalls append "$DB_ID" --rule app:<app_id>`).
+5. DO App Platform redeploys on the spec update (PRE_DEPLOY runs `alembic upgrade head`).
+   Smoke-test `/healthz` and `/readyz`.
 6. Document the incident in `docs/INCIDENTS.md`.
 
 ## Runbook — "The drill is failing"

@@ -8,7 +8,7 @@ always read those files before making changes:
 - `../loftly/mvp/API_CONTRACT.md` — endpoint inventory
 - `../loftly/mvp/artifacts/openapi.yaml` — OpenAPI 3.1 (binding)
 - `../loftly/mvp/SCHEMA.md` + `artifacts/schema.sql` — 14 tables
-- `../loftly/mvp/DEPLOYMENT.md` — env vars + Fly.io target
+- `../loftly/mvp/DEPLOYMENT.md` — env vars + DigitalOcean App Platform target (deploy: `../loftly/mvp/artifacts/do/README.md`)
 
 Stack: Python 3.12 (uv), FastAPI, Pydantic v2, SQLAlchemy 2.0 async + asyncpg,
 Alembic, structlog. Tests use aiosqlite so models must stay portable. Lint:

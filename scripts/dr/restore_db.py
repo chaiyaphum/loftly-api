@@ -49,14 +49,16 @@ else:  # pragma: no cover
 
 log = logging.getLogger("loftly.dr.restore")
 
-#: Heuristic for "is this a prod DB URL?" — matches our fly.io prod cluster
-#: hostnames + any explicit "prod" token. Kept intentionally fuzzy: the
-#: founder would rather the guard fires on a false positive than silently
-#: restores over production data.
+#: Heuristic for "is this a prod DB URL?" — matches the DO prod database
+#: (`loftly_prod` / `loftly_prod_app` on the shared `loftly-staging` cluster)
+#: plus any explicit "prod" token. Kept intentionally fuzzy: the founder
+#: would rather the guard fires on a false positive than silently restores
+#: over production data.
 _PROD_HOST_PATTERN = re.compile(
-    r"(^|[@/.-])"  # boundary
-    r"(loftly-(api-)?prod"  # loftly-prod, loftly-api-prod
-    r"|loftly-postgres-prod"  # naming we've used in fly.toml
+    r"(^|[@/._-])"  # boundary (incl. '_' — DO DB/user names use underscores)
+    r"(loftly_prod"  # DO: loftly_prod DB, loftly_prod_app user
+    r"|loftly-(api-)?prod"  # loftly-prod, loftly-api-prod
+    r"|loftly-postgres-prod"  # legacy fly.toml naming (pre-2026-04-21 swap)
     r"|prod\.loftly"  # prod.loftly.co.th
     r"|[\w-]*-prod\.)"  # anything ending -prod.
 )
